@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass, field
-from config import GridConfig, DCAConfig
+from config import GridConfig, DCAConfig, FeeConfig
 
 
 @dataclass
@@ -13,6 +13,9 @@ class Order:
     fill_price: float = 0.0
     fill_time: float = 0.0
     order_type: str = "grid"  # "grid" or "dca"
+    fee_type: str = "maker"   # "maker" or "taker"
+    fee_paid: float = 0.0
+    slippage_cost: float = 0.0
 
 
 @dataclass
@@ -21,6 +24,7 @@ class GridDCAStrategy:
     grid_cfg: GridConfig
     dca_cfg: DCAConfig
     total_budget: float
+    fees: FeeConfig = field(default_factory=FeeConfig)
 
     grid_orders: list = field(default_factory=list)
     dca_orders: list = field(default_factory=list)
@@ -32,6 +36,9 @@ class GridDCAStrategy:
     usdt_allocated_dca: float = 0.0
     last_dca_time: float = 0.0
     total_fees_paid: float = 0.0
+    total_slippage_cost: float = 0.0
+    total_maker_fees: float = 0.0
+    total_taker_fees: float = 0.0
 
     _initialized: bool = False
 
@@ -62,6 +69,7 @@ class GridDCAStrategy:
                     price=round(level_price, 2),
                     amount_usdt=self.grid_cfg.investment_per_grid,
                     quantity=round(qty, 8),
+                    fee_type="maker",
                 )
                 self.grid_orders.append(order)
             elif level_price > self.entry_price:
@@ -71,8 +79,23 @@ class GridDCAStrategy:
                     price=round(level_price, 2),
                     amount_usdt=self.grid_cfg.investment_per_grid,
                     quantity=round(qty, 8),
+                    fee_type="maker",
                 )
                 self.grid_orders.append(order)
+
+    def _apply_fee(self, amount: float, fee_type: str) -> tuple[float, float]:
+        """Return (net_amount, fee). Grid limit orders = maker, DCA/market = taker."""
+        rate = self.fees.maker_rate if fee_type == "maker" else self.fees.taker_rate
+        fee = amount * rate
+        return amount - fee, fee
+
+    def _apply_slippage(self, price: float, side: str) -> tuple[float, float]:
+        """Simulate slippage on market orders. Limit orders have no slippage."""
+        slip = price * (self.fees.slippage_pct / 100)
+        if side == "buy":
+            return price + slip, slip
+        else:
+            return price - slip, slip
 
     def tick(self, current_price: float, current_time: float) -> list[Order]:
         filled_this_tick = []
@@ -96,20 +119,22 @@ class GridDCAStrategy:
             )
 
             if should_fill:
-                fee_rate = 0.001  # 0.1% taker fee
                 if order.side == "buy":
                     if self.usdt_balance >= order.amount_usdt:
-                        fee = order.amount_usdt * fee_rate
-                        net_usdt = order.amount_usdt - fee
+                        # Grid = limit order = maker fee, no slippage
+                        net_usdt, fee = self._apply_fee(order.amount_usdt, "maker")
                         qty_bought = net_usdt / price
                         self.coin_balance += qty_bought
                         self.usdt_balance -= order.amount_usdt
                         self.total_fees_paid += fee
+                        self.total_maker_fees += fee
 
                         order.filled = True
                         order.fill_price = price
                         order.fill_time = ts
                         order.quantity = qty_bought
+                        order.fee_paid = fee
+                        order.fee_type = "maker"
                         filled.append(order)
                         self.filled_orders.append(order)
 
@@ -119,20 +144,24 @@ class GridDCAStrategy:
                             price=round(sell_price, 2),
                             amount_usdt=order.amount_usdt,
                             quantity=round(qty_bought, 8),
+                            fee_type="maker",
                         ))
 
                 elif order.side == "sell":
                     if self.coin_balance >= order.quantity:
+                        # Grid sell = limit order = maker fee, no slippage
                         gross_usdt = order.quantity * price
-                        fee = gross_usdt * fee_rate
-                        net_usdt = gross_usdt - fee
+                        net_usdt, fee = self._apply_fee(gross_usdt, "maker")
                         self.coin_balance -= order.quantity
                         self.usdt_balance += net_usdt
                         self.total_fees_paid += fee
+                        self.total_maker_fees += fee
 
                         order.filled = True
                         order.fill_price = price
                         order.fill_time = ts
+                        order.fee_paid = fee
+                        order.fee_type = "maker"
                         filled.append(order)
                         self.filled_orders.append(order)
 
@@ -142,6 +171,7 @@ class GridDCAStrategy:
                             price=round(buy_price, 2),
                             amount_usdt=order.amount_usdt,
                             quantity=round(order.amount_usdt / buy_price, 8),
+                            fee_type="maker",
                         ))
 
         self.grid_orders = [o for o in self.grid_orders if not o.filled]
@@ -157,18 +187,20 @@ class GridDCAStrategy:
             return []
 
         buy_amount = min(self.dca_cfg.amount_per_buy, self.usdt_allocated_dca, self.usdt_balance)
-        if buy_amount < 1.0:
+        if buy_amount < self.fees.min_order_usdt:
             return []
 
-        fee_rate = 0.001
-        fee = buy_amount * fee_rate
-        net = buy_amount - fee
-        qty = net / price
+        # DCA = market order = taker fee + slippage
+        fill_price, slip_cost = self._apply_slippage(price, "buy")
+        net_usdt, fee = self._apply_fee(buy_amount, "taker")
+        qty = net_usdt / fill_price
 
         self.coin_balance += qty
         self.usdt_balance -= buy_amount
         self.usdt_allocated_dca -= buy_amount
         self.total_fees_paid += fee
+        self.total_taker_fees += fee
+        self.total_slippage_cost += slip_cost * qty
         self.last_dca_time = ts
 
         order = Order(
@@ -177,9 +209,12 @@ class GridDCAStrategy:
             amount_usdt=buy_amount,
             quantity=round(qty, 8),
             filled=True,
-            fill_price=price,
+            fill_price=round(fill_price, 2),
             fill_time=ts,
             order_type="dca",
+            fee_type="taker",
+            fee_paid=fee,
+            slippage_cost=round(slip_cost * qty, 4),
         )
         self.filled_orders.append(order)
         return [order]
@@ -204,6 +239,9 @@ class GridDCAStrategy:
             "coin_balance": round(self.coin_balance, 8),
             "usdt_balance": round(self.usdt_balance, 2),
             "total_fees": round(self.total_fees_paid, 2),
+            "maker_fees": round(self.total_maker_fees, 2),
+            "taker_fees": round(self.total_taker_fees, 2),
+            "slippage_cost": round(self.total_slippage_cost, 2),
             "grid_buys": grid_buys,
             "grid_sells": grid_sells,
             "dca_buys": len(dca_fills),

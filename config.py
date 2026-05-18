@@ -9,6 +9,17 @@ class Mode(Enum):
 
 
 @dataclass
+class FeeConfig:
+    """OKX spot fee schedule (regular user, no VIP).
+    Grid limit orders = maker; DCA market buys / debate market orders = taker.
+    Slippage models real-world fill deviation on market orders."""
+    maker_rate: float = 0.0008     # 0.08% — OKX maker
+    taker_rate: float = 0.0010     # 0.10% — OKX taker
+    slippage_pct: float = 0.02     # 0.02% avg slippage on BTC/USDT market orders
+    min_order_usdt: float = 1.0    # OKX minimum order size
+
+
+@dataclass
 class GridConfig:
     price_range_pct: float = 5.0       # +/- 5% from entry price
     num_grids: int = 20                 # number of grid levels
@@ -22,7 +33,7 @@ class DCAConfig:
 @dataclass
 class BotConfig:
     mode: Mode = Mode.SIMULATION
-    fee_rate: float = 0.001  # OKX spot taker: 0.1%
+    fees: FeeConfig = field(default_factory=FeeConfig)
     symbol: str = "BTC/USDT"
     total_budget_usdt: float = 2000.0
     grid: GridConfig = field(default_factory=GridConfig)

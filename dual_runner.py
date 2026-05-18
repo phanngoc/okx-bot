@@ -23,7 +23,8 @@ import ccxt
 import numpy as np
 
 from agents import run_debate, format_debate
-from config import GridConfig, DCAConfig
+from config import GridConfig, DCAConfig, FeeConfig
+from db import get_conn, create_session, end_session, save_snapshot, save_trade, save_debate, save_result
 from news_sentiment import analyze_sentiment
 from strategy import GridDCAStrategy
 from technical import compute_all
@@ -43,36 +44,60 @@ signal.signal(signal.SIGTERM, handle_signal)
 
 @dataclass
 class DebatePosition:
+    """Debate bot position tracker with realistic OKX fee model.
+    All debate orders are market orders = taker fee + slippage."""
     coin_balance: float = 0.0
     usdt_balance: float = 0.0
     total_budget: float = 0.0
     trades: list = field(default_factory=list)
     total_fees: float = 0.0
+    total_slippage_cost: float = 0.0
+    fees: FeeConfig = field(default_factory=FeeConfig)
 
     def buy(self, price: float, usdt_amount: float, ts: float):
         if usdt_amount > self.usdt_balance:
             usdt_amount = self.usdt_balance
-        if usdt_amount < 1:
+        if usdt_amount < self.fees.min_order_usdt:
             return
-        fee = usdt_amount * 0.001
+        # Market order: taker fee + slippage
+        slip = price * (self.fees.slippage_pct / 100)
+        fill_price = price + slip
+        fee = usdt_amount * self.fees.taker_rate
         net = usdt_amount - fee
-        qty = net / price
+        qty = net / fill_price
+        slip_cost = slip * qty
         self.coin_balance += qty
         self.usdt_balance -= usdt_amount
         self.total_fees += fee
-        self.trades.append({"time": ts, "side": "BUY", "price": price, "qty": qty, "usdt": usdt_amount})
+        self.total_slippage_cost += slip_cost
+        self.trades.append({
+            "time": ts, "side": "BUY", "price": price,
+            "fill_price": round(fill_price, 2), "qty": qty,
+            "usdt": usdt_amount, "fee": round(fee, 4),
+            "slippage": round(slip_cost, 4),
+        })
 
     def sell(self, price: float, pct: float, ts: float):
         qty = self.coin_balance * (pct / 100)
-        if qty * price < 1:
+        if qty * price < self.fees.min_order_usdt:
             return
-        gross = qty * price
-        fee = gross * 0.001
+        # Market order: taker fee + slippage
+        slip = price * (self.fees.slippage_pct / 100)
+        fill_price = price - slip
+        gross = qty * fill_price
+        fee = gross * self.fees.taker_rate
         net = gross - fee
+        slip_cost = slip * qty
         self.coin_balance -= qty
         self.usdt_balance += net
         self.total_fees += fee
-        self.trades.append({"time": ts, "side": "SELL", "price": price, "qty": qty, "usdt": net})
+        self.total_slippage_cost += slip_cost
+        self.trades.append({
+            "time": ts, "side": "SELL", "price": price,
+            "fill_price": round(fill_price, 2), "qty": qty,
+            "usdt": net, "fee": round(fee, 4),
+            "slippage": round(slip_cost, 4),
+        })
 
     def portfolio_value(self, price: float) -> float:
         return self.usdt_balance + self.coin_balance * price
@@ -144,13 +169,22 @@ def print_final_report(symbol, hours, budget, entry_price, final_price,
     print(f"  Entry:     ${entry_price:,.2f}")
     print(f"  Exit:      ${final_price:,.2f} ({(final_price-entry_price)/entry_price*100:+.2f}%)")
 
+    g_maker = grid_stats.get('maker_fees', 0)
+    g_taker = grid_stats.get('taker_fees', 0)
+    g_slip = grid_stats.get('slippage_cost', 0)
+    g_total_cost = grid_stats.get('total_fees', 0) + g_slip
+
     print(f"\n  {'─'*30} GRID+DCA {'─'*30}")
     print(f"  Portfolio:  ${grid_pv:,.2f}")
     print(f"  ROI:        {grid_roi:+.4f}%")
     print(f"  Trades:     {grid_stats['total_trades']}")
     print(f"  Coin held:  {grid_stats.get('coin_balance', 0):.6f}")
     print(f"  USDT held:  ${grid_stats.get('usdt_balance', 0):,.2f}")
-    print(f"  Fees:       ${grid_stats.get('total_fees', 0):,.2f}")
+    print(f"  Fees:       ${grid_stats.get('total_fees', 0):,.2f} (maker ${g_maker:,.2f} + taker ${g_taker:,.2f})")
+    print(f"  Slippage:   ${g_slip:,.2f}")
+    print(f"  Total cost: ${g_total_cost:,.2f}")
+
+    d_total_cost = debate_pos.total_fees + debate_pos.total_slippage_cost
 
     print(f"\n  {'─'*30} DEBATE {'─'*31}")
     print(f"  Portfolio:  ${debate_pv:,.2f}")
@@ -159,7 +193,9 @@ def print_final_report(symbol, hours, budget, entry_price, final_price,
     print(f"  Trades:     {d_buys} buys, {d_sells} sells")
     print(f"  Coin held:  {debate_pos.coin_balance:.6f}")
     print(f"  USDT held:  ${debate_pos.usdt_balance:,.2f}")
-    print(f"  Fees:       ${debate_pos.total_fees:,.2f}")
+    print(f"  Fees:       ${debate_pos.total_fees:,.2f} (all taker — market orders)")
+    print(f"  Slippage:   ${debate_pos.total_slippage_cost:,.2f}")
+    print(f"  Total cost: ${d_total_cost:,.2f}")
 
     print(f"\n  {'─'*30} BUY&HOLD {'─'*30}")
     print(f"  Portfolio:  ${bh_pv:,.2f}")
@@ -190,17 +226,26 @@ def print_final_report(symbol, hours, budget, entry_price, final_price,
         "entry_price": entry_price,
         "exit_price": final_price,
         "grid_roi": grid_roi,
-        "debate_roi": debate_roi,
-        "buyhold_roi": bh_roi,
-        "winner": winner,
+        "grid_pv": grid_pv,
         "grid_trades": grid_stats["total_trades"],
+        "grid_fees": grid_stats.get("total_fees", 0),
+        "grid_slippage": grid_stats.get("slippage_cost", 0),
+        "debate_roi": debate_roi,
+        "debate_pv": debate_pv,
         "debate_trades": d_buys + d_sells,
+        "debate_fees": debate_pos.total_fees,
+        "debate_slippage": debate_pos.total_slippage_cost,
+        "buyhold_roi": bh_roi,
+        "buyhold_pv": bh_pv,
+        "winner": winner,
         "debate_count": debate_count,
     }
 
 
-def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
+def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg, fee_cfg=None):
     """Fast backtest both bots on the same historical candles."""
+    if fee_cfg is None:
+        fee_cfg = FeeConfig()
     exchange = ccxt.okx({"enableRateLimit": True})
     print_header(symbol, budget, hours, "FAST BACKTEST")
 
@@ -217,7 +262,13 @@ def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
     entry_price = trade_candles[0][4]
     bh_qty = budget / entry_price
 
+    print(f"[FEES] Maker: {fee_cfg.maker_rate*100:.2f}% | Taker: {fee_cfg.taker_rate*100:.2f}% | Slippage: {fee_cfg.slippage_pct:.2f}%")
     print(f"[START] Entry: ${entry_price:,.2f} | Trading {actual_hours}h\n")
+
+    # DB session
+    conn = get_conn()
+    session_id = create_session(conn, symbol, budget, actual_hours, entry_price, mode="backtest")
+    print(f"[DB] Session #{session_id} created")
 
     # --- Init Grid+DCA ---
     grid_strategy = GridDCAStrategy(
@@ -225,13 +276,14 @@ def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
         grid_cfg=grid_cfg,
         dca_cfg=dca_cfg,
         total_budget=budget,
+        fees=fee_cfg,
     )
     grid_strategy.initialize()
     grid_tracker = PerformanceTracker(initial_investment=budget, entry_price=entry_price)
     grid_strategy.last_dca_time = trade_candles[0][0] / 1000
 
     # --- Init Debate ---
-    debate_pos = DebatePosition(usdt_balance=budget, total_budget=budget)
+    debate_pos = DebatePosition(usdt_balance=budget, total_budget=budget, fees=fee_cfg)
     coin = symbol.split("/")[0]
     sentiment = analyze_sentiment(coin)
     debate_count = 0
@@ -271,7 +323,7 @@ def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
                     if debate_pos.coin_balance * price > 5:
                         debate_pos.sell(price, sell_pct, ts)
 
-        # Periodic report
+        # Periodic report + DB snapshot
         if i > 0 and i % report_every == 0:
             grid_stats = grid_strategy.stats(price)
             grid_tracker.record(ts, price, grid_stats)
@@ -283,6 +335,14 @@ def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
             bh_roi = (bh_pv - budget) / budget * 100
             print_comparison(i, price, grid_pv, grid_roi, debate_pv, debate_roi, bh_pv, bh_roi)
 
+            save_snapshot(conn, session_id, ts, price, "Grid+DCA",
+                          grid_pv, grid_roi, grid_stats["coin_balance"], grid_stats["usdt_balance"],
+                          grid_stats["total_trades"], grid_stats["total_fees"], grid_stats.get("slippage_cost", 0))
+            save_snapshot(conn, session_id, ts, price, "Debate",
+                          debate_pv, debate_roi, debate_pos.coin_balance, debate_pos.usdt_balance,
+                          len(debate_pos.trades), debate_pos.total_fees, debate_pos.total_slippage_cost)
+            save_snapshot(conn, session_id, ts, price, "Buy&Hold", bh_pv, bh_roi, bh_qty, 0, 0, 0, 0)
+
     # Final
     final_price = trade_candles[actual_hours - 1][4]
     grid_stats = grid_strategy.stats(final_price)
@@ -293,11 +353,14 @@ def run_fast_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
         grid_stats, grid_tracker, debate_pos, debate_count, bh_qty
     )
 
-    save_results(report_data)
+    save_results(report_data, session_id)
+    conn.close()
 
 
-def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
+def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg, fee_cfg=None):
     """Live simulation: both bots use the same real-time price feed."""
+    if fee_cfg is None:
+        fee_cfg = FeeConfig()
     exchange = ccxt.okx({"enableRateLimit": True})
     print_header(symbol, budget, hours, "LIVE SIMULATION")
 
@@ -306,7 +369,13 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
     bh_qty = budget / entry_price
     coin = symbol.split("/")[0]
 
+    print(f"[FEES] Maker: {fee_cfg.maker_rate*100:.2f}% | Taker: {fee_cfg.taker_rate*100:.2f}% | Slippage: {fee_cfg.slippage_pct:.2f}%")
     print(f"[START] Entry: ${entry_price:,.2f} | {datetime.now(timezone.utc).isoformat()}\n")
+
+    # DB session
+    conn = get_conn()
+    session_id = create_session(conn, symbol, budget, hours, entry_price, mode="live")
+    print(f"[DB] Session #{session_id} created")
 
     # --- Init Grid+DCA ---
     grid_strategy = GridDCAStrategy(
@@ -314,12 +383,13 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
         grid_cfg=grid_cfg,
         dca_cfg=dca_cfg,
         total_budget=budget,
+        fees=fee_cfg,
     )
     grid_strategy.initialize()
     grid_tracker = PerformanceTracker(initial_investment=budget, entry_price=entry_price)
 
     # --- Init Debate ---
-    debate_pos = DebatePosition(usdt_balance=budget, total_budget=budget)
+    debate_pos = DebatePosition(usdt_balance=budget, total_budget=budget, fees=fee_cfg)
     debate_count = 0
 
     start = time.time()
@@ -344,6 +414,9 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
                     f"  [{elapsed_h:6.1f}h] [GRID+DCA] [{tag}] {order.side.upper():4s} "
                     f"@ ${order.fill_price:,.2f} | Qty: {order.quantity:.6f}"
                 )
+                save_trade(conn, session_id, now, "Grid+DCA", order.side,
+                           price, order.fill_price, order.quantity, order.amount_usdt,
+                           order.fee_paid, order.slippage_cost, order.order_type)
 
             tick_count += 1
             if tick_count % 10 == 0:
@@ -359,6 +432,11 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
                     result = run_debate(ta, sentiment)
                     decision = result["decision"]
                     debate_count += 1
+
+                    save_debate(conn, session_id, now, price,
+                                result["bull"].score, result["bear"].score, decision.score,
+                                decision.direction, decision.confidence,
+                                sentiment.get("label", ""), sentiment.get("score", 0))
 
                     dir_emoji = {"BUY": "📈", "SELL": "📉", "HOLD": "⏸️"}.get(decision.direction, "?")
                     print(
@@ -383,7 +461,7 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
 
                     last_debate = now
 
-            # Periodic comparison
+            # Periodic comparison + DB snapshot
             if now - last_report >= 1800:
                 grid_stats = grid_strategy.stats(price)
                 grid_pv = grid_stats["portfolio_value"]
@@ -393,6 +471,14 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
                 bh_pv = bh_qty * price
                 bh_roi = (bh_pv - budget) / budget * 100
                 print_comparison(elapsed_h, price, grid_pv, grid_roi, debate_pv, debate_roi, bh_pv, bh_roi)
+
+                save_snapshot(conn, session_id, now, price, "Grid+DCA",
+                              grid_pv, grid_roi, grid_stats["coin_balance"], grid_stats["usdt_balance"],
+                              grid_stats["total_trades"], grid_stats["total_fees"], grid_stats.get("slippage_cost", 0))
+                save_snapshot(conn, session_id, now, price, "Debate",
+                              debate_pv, debate_roi, debate_pos.coin_balance, debate_pos.usdt_balance,
+                              len(debate_pos.trades), debate_pos.total_fees, debate_pos.total_slippage_cost)
+                save_snapshot(conn, session_id, now, price, "Buy&Hold", bh_pv, bh_roi, bh_qty, 0, 0, 0, 0)
                 last_report = now
 
             time.sleep(30)
@@ -418,10 +504,11 @@ def run_live_dual(symbol, budget, hours, debate_interval, grid_cfg, dca_cfg):
         grid_stats, grid_tracker, debate_pos, debate_count, bh_qty
     )
 
-    save_results(report_data)
+    save_results(report_data, session_id)
+    conn.close()
 
 
-def save_results(data):
+def save_results(data, session_id=None):
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -429,6 +516,28 @@ def save_results(data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
     print(f"[SAVED] {path}")
+
+    # Save to SQLite
+    if session_id:
+        try:
+            conn = get_conn()
+            bh_roi = data.get("buyhold_roi", 0)
+            strategies = [
+                ("Grid+DCA", data.get("grid_roi", 0), data.get("grid_trades", 0),
+                 data.get("grid_fees", 0), data.get("grid_slippage", 0), data.get("grid_pv", 0)),
+                ("Debate", data.get("debate_roi", 0), data.get("debate_trades", 0),
+                 data.get("debate_fees", 0), data.get("debate_slippage", 0), data.get("debate_pv", 0)),
+                ("Buy&Hold", bh_roi, 0, 0, 0, data.get("buyhold_pv", 0)),
+            ]
+            strategies.sort(key=lambda x: x[1], reverse=True)
+            for rank, (name, roi, trades, fees, slip, pv) in enumerate(strategies, 1):
+                alpha = roi - bh_roi
+                save_result(conn, session_id, name, roi, alpha, trades, fees, slip, fees + slip, pv, rank)
+            end_session(conn, session_id, data.get("exit_price", 0))
+            conn.close()
+            print(f"[DB] Results saved to SQLite (session #{session_id})")
+        except Exception as e:
+            print(f"[DB] Error saving: {e}")
 
 
 def main():
@@ -454,11 +563,12 @@ def main():
         interval_hours=args.dca_interval,
         amount_per_buy=args.dca_amount,
     )
+    fee_cfg = FeeConfig()
 
     if args.fast:
-        run_fast_dual(args.symbol, args.budget, args.hours, args.debate_interval, grid_cfg, dca_cfg)
+        run_fast_dual(args.symbol, args.budget, args.hours, args.debate_interval, grid_cfg, dca_cfg, fee_cfg)
     else:
-        run_live_dual(args.symbol, args.budget, args.hours, args.debate_interval, grid_cfg, dca_cfg)
+        run_live_dual(args.symbol, args.budget, args.hours, args.debate_interval, grid_cfg, dca_cfg, fee_cfg)
 
 
 if __name__ == "__main__":
