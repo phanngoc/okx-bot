@@ -235,7 +235,17 @@ class RegimeDetector:
         else:
             regime = Regime.SIDEWAYS
 
-        reasoning = f"score={score:+d} | dir_eff={s['dir_eff']:.2f} | " + " | ".join(reasons[:4])
+        # Reclassify low-volatility mild trends as SIDEWAYS:
+        # a slight drift inside a narrow BB band is range-bound behavior,
+        # not a directional move. Grid+DCA captures these far better than
+        # MeanRevert (which under-trades) or directional strategies.
+        mild_label = ""
+        if (regime in (Regime.MILD_DOWNTREND, Regime.MILD_UPTREND)
+                and s["bb_width"] < 3.0):
+            mild_label = f" → reclassified SIDEWAYS (low vol BB={s['bb_width']:.1f}%)"
+            regime = Regime.SIDEWAYS
+
+        reasoning = f"score={score:+d} | dir_eff={s['dir_eff']:.2f} | " + " | ".join(reasons[:4]) + mild_label
         return regime, confidence, score, reasoning
 
 
