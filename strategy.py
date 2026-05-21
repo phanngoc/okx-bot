@@ -1,5 +1,6 @@
 import time
 from dataclasses import dataclass, field
+from typing import Optional
 from config import GridConfig, DCAConfig, FeeConfig
 
 
@@ -248,3 +249,142 @@ class GridDCAStrategy:
             "total_trades": len(self.filled_orders),
             "pending_grid_orders": len([o for o in self.grid_orders if not o.filled]),
         }
+
+    def rebuild_grid(self, center_price: float, upper_pct: float, lower_pct: float):
+        """Rebuild pending grid orders around a new center with asymmetric range."""
+        low = center_price * (1 - lower_pct / 100)
+        high = center_price * (1 + upper_pct / 100)
+        step = (high - low) / self.grid_cfg.num_grids
+
+        self.grid_orders = [o for o in self.grid_orders if o.filled]
+        for i in range(self.grid_cfg.num_grids + 1):
+            level_price = low + i * step
+            if level_price < center_price:
+                qty = self.grid_cfg.investment_per_grid / level_price
+                self.grid_orders.append(Order(
+                    side="buy", price=round(level_price, 2),
+                    amount_usdt=self.grid_cfg.investment_per_grid,
+                    quantity=round(qty, 8), fee_type="maker",
+                ))
+            elif level_price > center_price:
+                qty = self.grid_cfg.investment_per_grid / level_price
+                self.grid_orders.append(Order(
+                    side="sell", price=round(level_price, 2),
+                    amount_usdt=self.grid_cfg.investment_per_grid,
+                    quantity=round(qty, 8), fee_type="maker",
+                ))
+
+
+class MAGridDCAStrategy:
+    """Grid+DCA with MA5/MA60 trend detection.
+
+    Every `rebalance_interval` hours, computes MA5 and MA60 from price history.
+    - Uptrend (MA5 > MA60 by >0.3%): shift grid ceiling up (+7%), floor tighter (-3%), boost DCA 1.3x
+    - Downtrend (MA5 < MA60 by >0.3%): shift grid floor down (-7%), ceiling tighter (+3%), reduce DCA 0.5x
+    - Sideways: standard symmetric +/-5% grid, normal DCA
+    """
+
+    def __init__(self, entry_price: float, total_budget: float,
+                 fees: FeeConfig = None,
+                 grid_cfg: GridConfig = None,
+                 dca_cfg: DCAConfig = None,
+                 rebalance_interval: int = 6,
+                 ma_short: int = 5,
+                 ma_long: int = 60,
+                 trend_threshold: float = 0.5):
+        self.entry_price = entry_price
+        self.total_budget = total_budget
+        self.fees = fees or FeeConfig()
+        self.grid_cfg = grid_cfg or GridConfig()
+        self.dca_cfg = dca_cfg or DCAConfig()
+        self.rebalance_interval = rebalance_interval
+        self.ma_short = ma_short
+        self.ma_long = ma_long
+        self.trend_threshold = trend_threshold
+
+        self.prices: list[float] = []
+        self.candles_seen = 0
+        self.current_trend = "neutral"
+        self.trend_history: list[dict] = []
+        self.rebalance_count = 0
+
+        self._base_dca_amount = self.dca_cfg.amount_per_buy
+
+        self._grid = GridDCAStrategy(
+            entry_price=entry_price,
+            grid_cfg=self.grid_cfg,
+            dca_cfg=self.dca_cfg,
+            total_budget=total_budget,
+            fees=self.fees,
+        )
+        self._grid.initialize()
+
+    def _detect_trend(self) -> tuple[str, float]:
+        """Return (trend, spread_pct) from MA crossover."""
+        if len(self.prices) < self.ma_long:
+            return "neutral", 0.0
+        ma_s = sum(self.prices[-self.ma_short:]) / self.ma_short
+        ma_l = sum(self.prices[-self.ma_long:]) / self.ma_long
+        spread = (ma_s - ma_l) / ma_l * 100
+        if spread > self.trend_threshold:
+            return "bull", spread
+        elif spread < -self.trend_threshold:
+            return "bear", spread
+        return "neutral", spread
+
+    def _rebalance_grid(self, current_price: float):
+        """Adjust grid range based on detected trend."""
+        trend, spread = self._detect_trend()
+        old_trend = self.current_trend
+        self.current_trend = trend
+
+        if trend == "bull":
+            upper_pct = 7.0
+            lower_pct = 3.0
+            self._grid.dca_cfg.amount_per_buy = self._base_dca_amount * 1.3
+        elif trend == "bear":
+            upper_pct = 3.0
+            lower_pct = 7.0
+            self._grid.dca_cfg.amount_per_buy = self._base_dca_amount * 0.5
+        else:
+            upper_pct = 5.0
+            lower_pct = 5.0
+            self._grid.dca_cfg.amount_per_buy = self._base_dca_amount
+
+        self._grid.rebuild_grid(current_price, upper_pct, lower_pct)
+        self.rebalance_count += 1
+
+        self.trend_history.append({
+            "hour": self.candles_seen,
+            "trend": trend,
+            "spread": round(spread, 4),
+            "price": current_price,
+            "upper_pct": upper_pct,
+            "lower_pct": lower_pct,
+            "changed": trend != old_trend,
+        })
+
+    def tick(self, current_price: float, current_time: float):
+        return self._grid.tick(current_price, current_time)
+
+    def on_candle_close(self, close_price: float):
+        """Call once per candle with the close price (for MA calculation)."""
+        self.prices.append(close_price)
+        self.candles_seen += 1
+
+        if (self.candles_seen > 0
+                and self.candles_seen % self.rebalance_interval == 0
+                and len(self.prices) >= self.ma_long):
+            self._rebalance_grid(close_price)
+
+    def portfolio_value(self, current_price: float) -> float:
+        return self._grid.portfolio_value(current_price)
+
+    def stats(self, current_price: float) -> dict:
+        base = self._grid.stats(current_price)
+        base["trend"] = self.current_trend
+        base["rebalances"] = self.rebalance_count
+        base["trend_history"] = self.trend_history
+        trend_changes = sum(1 for t in self.trend_history if t["changed"])
+        base["trend_changes"] = trend_changes
+        return base
