@@ -84,12 +84,19 @@ class Fill:
 
 @dataclass(frozen=True)
 class PriceTick:
-    """A new price observation. Sim feeds these from candles; live from ticker poll."""
-    symbol: str
-    price:  float        # close / last
-    high:   float        # for limit fill check across candle
-    low:    float
-    ts:     float
+    """A new price observation. Sim feeds these from candles; live from ticker poll.
+
+    `pv_hint` is the current total equity (quote + base × price) snapshot at this tick.
+    Engine populates it before forwarding so strategies that need PV context (e.g.
+    Adaptive's skip-if-winning guard) can read it without coupling to an Executor.
+    Defaults to 0.0 — strategies that don't care can ignore it.
+    """
+    symbol:  str
+    price:   float        # close / last
+    high:    float        # for limit fill check across candle
+    low:     float
+    ts:      float
+    pv_hint: float = 0.0
 
 
 @dataclass(frozen=True)

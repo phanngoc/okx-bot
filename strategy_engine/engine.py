@@ -6,7 +6,7 @@ For live:     caller polls the broker at fixed interval, calls step().
 Same code path either way → no logic drift between backtest and live.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from strategy_engine.executor import Executor
@@ -47,6 +47,16 @@ class Engine:
         # Sim-only: hand the tick to executor so it knows current price
         if hasattr(self.executor, "feed_tick"):
             self.executor.feed_tick(tick)
+
+        # Populate pv_hint so strategies can read current equity without
+        # holding an executor reference. Skip if executor errors (live mode
+        # may have transient API failures — strategies fall back to 0.0).
+        try:
+            pv = self.executor.portfolio_value(tick.symbol, tick.price)
+            if pv > 0 and tick.pv_hint == 0.0:
+                tick = replace(tick, pv_hint=pv)
+        except Exception:
+            pass  # leave pv_hint at 0.0
 
         intents: list[Intent] = []
 

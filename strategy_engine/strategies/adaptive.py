@@ -41,6 +41,7 @@ class AdaptiveConfig:
     min_confidence:         float = 0.7           # min regime confidence to switch
     cooldown_candles:       int   = 48            # don't switch again within this window
     initial_strategy_name:  str   = "Grid+DCA"    # fallback when no warmup data
+    skip_if_winning_above_pct: float = 0.0        # don't switch a profitable child
 
 
 class AdaptiveStrategy(Strategy):
@@ -59,6 +60,7 @@ class AdaptiveStrategy(Strategy):
         # Diagnostics
         self.skipped_low_conf = 0
         self.skipped_cooldown = 0
+        self.skipped_winning  = 0
         self.switches: list[dict] = []
 
     # ------------------------------------------------------------------
@@ -101,9 +103,23 @@ class AdaptiveStrategy(Strategy):
                     self.skipped_low_conf += 1
                 elif self.candle_count - self.last_switch_candle < self.cfg.cooldown_candles:
                     self.skipped_cooldown += 1
+                elif self._child_is_winning(tick):
+                    # Don't kill a winner — current child has open profit
+                    self.skipped_winning += 1
+                    log.info(f"[ADAPTIVE] skip switch — {self.current_strategy_name} "
+                             f"is winning ({(tick.pv_hint - self.cfg.allocation_usdt) / self.cfg.allocation_usdt * 100:+.2f}%)")
                 else:
                     intents.extend(self._switch_to(new, tick))
         return intents
+
+    def _child_is_winning(self, tick: PriceTick) -> bool:
+        """True iff current child's PnL (via engine-provided pv_hint) exceeds
+        the configured threshold. pv_hint=0 means Engine didn't populate it
+        (e.g. live API error) — treat as "no info" → don't skip."""
+        if tick.pv_hint <= 0:
+            return False
+        roi_pct = (tick.pv_hint - self.cfg.allocation_usdt) / self.cfg.allocation_usdt * 100
+        return roi_pct > self.cfg.skip_if_winning_above_pct
 
     def on_fill(self, fill: Fill) -> list[Intent]:
         if self.current_child is None:
