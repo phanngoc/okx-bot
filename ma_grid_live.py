@@ -81,6 +81,12 @@ class LiveMAGrid:
     # Persistence
     # ------------------------------------------------------------------
 
+    # Status enum (string-typed for SQLite simplicity)
+    STATUS_RUNNING  = "running"
+    STATUS_PAUSED   = "paused"
+    STATUS_STOPPED  = "stopped"   # cancelled all, possibly sold (kill_switch)
+    STATUS_ERRORED  = "errored"
+
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript("""
@@ -108,6 +114,19 @@ class LiveMAGrid:
                     ts TEXT PRIMARY KEY, trend TEXT, spread_pct REAL, price REAL
                 );
             """)
+            # Idempotent column migrations (for resume support)
+            self._add_column_if_missing(conn, "live_session", "start_usdt",        "REAL")
+            self._add_column_if_missing(conn, "live_session", "start_base",        "REAL")
+            self._add_column_if_missing(conn, "live_session", "last_dca_ts",       "REAL")
+            self._add_column_if_missing(conn, "live_session", "last_rebalance_ts", "REAL")
+            self._add_column_if_missing(conn, "live_session", "current_trend",     "TEXT")
+            self._add_column_if_missing(conn, "live_session", "ended_at",          "TEXT")
+
+    @staticmethod
+    def _add_column_if_missing(conn, table: str, col: str, type_: str) -> None:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_}")
 
     def _save_order(self, order: dict, kind: str):
         with sqlite3.connect(self.db_path) as conn:
@@ -145,14 +164,24 @@ class LiveMAGrid:
                 VALUES (?, ?, ?, ?)
             """, (datetime.now(timezone.utc).isoformat(), trend, spread, price))
 
+    def _persist_timer(self, column: str, value) -> None:
+        """Update a single column in the current running session row.
+        Idempotent — silently no-ops if no running session exists."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                f"UPDATE live_session SET {column}=? WHERE status=?",
+                (value, self.STATUS_RUNNING),
+            )
+
     # ------------------------------------------------------------------
     # Grid setup
     # ------------------------------------------------------------------
 
-    def setup_initial_grid(self) -> None:
+    def setup_initial_grid(self, start_usdt: float = 0.0, start_base: float = 0.0) -> None:
         """Place N buy limit orders below current price.
         Total notional ≈ allocation. Each order ≈ allocation/N.
-        Inserts live_session row FIRST so dashboard session-filter sees this run."""
+        Inserts live_session row FIRST so dashboard session-filter sees this run.
+        start_usdt / start_base: wallet snapshot for equity isolation (persisted)."""
         ticker = self.executor.fetch_ticker(self.symbol)
         mark = ticker["last"]
         self.entry_price = mark
@@ -161,9 +190,11 @@ class LiveMAGrid:
         # (dashboard filters by `WHERE created_at >= session.started_at`)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("""
-                INSERT INTO live_session (started_at, symbol, allocation, entry_price, status)
-                VALUES (?, ?, ?, ?, 'running')
-            """, (datetime.now(timezone.utc).isoformat(), self.symbol, self.alloc, self.entry_price))
+                INSERT INTO live_session
+                  (started_at, symbol, allocation, entry_price, status, start_usdt, start_base)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (datetime.now(timezone.utc).isoformat(), self.symbol, self.alloc,
+                  self.entry_price, self.STATUS_RUNNING, start_usdt, start_base))
 
         # Asymmetric grid based on current trend (neutral at start)
         upper_pct, lower_pct = self._grid_bounds(self.current_trend)
@@ -200,6 +231,139 @@ class LiveMAGrid:
             self.last_known_order_ids.add(r["id"])
 
         log.info(f"[GRID] initial setup complete — entry ${self.entry_price:,.2f}")
+
+    # ------------------------------------------------------------------
+    # Resume / pause lifecycle
+    # ------------------------------------------------------------------
+
+    MAX_RESUME_AGE_SEC = 7 * 86400   # don't resume sessions older than a week
+
+    def maybe_resume_session(self) -> Optional[dict]:
+        """Return latest resumable session row, or None if must start fresh.
+        Resumable = status in ('running', 'paused'), within MAX_RESUME_AGE_SEC,
+        and same symbol + same allocation as current config."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("""
+                SELECT * FROM live_session
+                WHERE status IN (?, ?)
+                ORDER BY id DESC LIMIT 1
+            """, (self.STATUS_RUNNING, self.STATUS_PAUSED)).fetchone()
+        if not row:
+            return None
+        s = dict(row)
+        # Validate
+        try:
+            started = datetime.fromisoformat(s["started_at"])
+            age = (datetime.now(timezone.utc) - started).total_seconds()
+        except Exception:
+            log.warning(f"[RESUME] couldn't parse started_at={s['started_at']}, skip")
+            return None
+        if age > self.MAX_RESUME_AGE_SEC:
+            log.warning(f"[RESUME] session #{s['id']} too old ({age/86400:.1f}d), start fresh")
+            return None
+        if s["symbol"] != self.symbol:
+            log.warning(f"[RESUME] session #{s['id']} symbol mismatch ({s['symbol']} vs {self.symbol}), start fresh")
+            return None
+        if abs((s["allocation"] or 0) - self.alloc) > 0.01:
+            log.warning(f"[RESUME] session #{s['id']} allocation changed "
+                        f"(${s['allocation']:.2f} → ${self.alloc:.2f}), start fresh")
+            return None
+        return s
+
+    def resume_from(self, session: dict) -> tuple[float, float]:
+        """Reconcile state with OKX, restore in-memory timers/trend.
+        Returns (start_usdt, start_base) for the engine's equity isolation."""
+        log.info(f"[RESUME] session #{session['id']} status={session['status']} "
+                 f"started {session['started_at']}")
+        self.entry_price        = session["entry_price"]
+        self.last_dca_ts        = session.get("last_dca_ts") or 0.0
+        self.last_rebalance_ts  = session.get("last_rebalance_ts") or 0.0
+        self.current_trend      = session.get("current_trend") or "neutral"
+
+        # Reconcile open orders: OKX vs DB
+        okx_open  = self.executor.fetch_open_orders(self.symbol)
+        okx_ids   = {o["id"] for o in okx_open}
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            db_open = conn.execute(
+                "SELECT id FROM live_orders WHERE status='open' AND created_at >= ?",
+                (session["started_at"],)
+            ).fetchall()
+        db_ids = {r["id"] for r in db_open}
+
+        known   = okx_ids & db_ids
+        orphans = okx_ids - db_ids    # on OKX but missing in our DB
+        missing = db_ids - okx_ids    # in our DB but gone from OKX (filled or cancelled)
+
+        log.info(f"[RESUME] OKX={len(okx_ids)}  DB={len(db_ids)}  "
+                 f"known={len(known)}  orphans={len(orphans)}  missing={len(missing)}")
+
+        # Adopt orphan orders (e.g. bot crashed before saving them)
+        for oid in orphans:
+            order = next(o for o in okx_open if o["id"] == oid)
+            self._save_order(order, kind="resumed_orphan")
+            log.warning(f"[RESUME] adopting orphan order {oid} {order['side']} "
+                        f"{order['amount']} @ ${order.get('price') or 0:,.2f}")
+
+        # Resolve missing orders: filled or cancelled outside our knowledge?
+        for oid in missing:
+            try:
+                order = self.executor.fetch_order(oid, self.symbol)
+                if order.get("status") in ("closed", "filled"):
+                    self._save_fill(
+                        oid, order.get("price") or 0, order.get("filled") or 0,
+                        order.get("side"),
+                        fee=(order.get("fee") or {}).get("cost") or 0,
+                        fee_ccy=(order.get("fee") or {}).get("currency") or "USDT",
+                        kind="resumed_late",
+                    )
+                    log.info(f"[RESUME] order {oid} filled in our absence: "
+                             f"{order['side']} {order.get('filled')} @ ${order.get('price') or 0:,.2f}")
+                else:
+                    with sqlite3.connect(self.db_path) as conn:
+                        conn.execute("UPDATE live_orders SET status=? WHERE id=?",
+                                     ("cancelled", oid))
+                    log.warning(f"[RESUME] order {oid} cancelled outside bot (status={order.get('status')})")
+            except Exception as e:
+                log.warning(f"[RESUME] couldn't resolve missing order {oid}: {e}")
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute("UPDATE live_orders SET status=? WHERE id=?",
+                                 ("lost", oid))
+
+        # Take over tracking
+        self.last_known_order_ids = okx_ids
+
+        # Mark session running again
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE live_session SET status=?, ended_at=NULL WHERE id=?",
+                (self.STATUS_RUNNING, session["id"]),
+            )
+
+        start_usdt = session.get("start_usdt") or 0.0
+        start_base = session.get("start_base") or 0.0
+        log.info(f"[RESUME] complete — entry ${self.entry_price:,.2f}  trend={self.current_trend}  "
+                 f"DCA last={int(self.last_dca_ts)}  rebal last={int(self.last_rebalance_ts)}")
+        return start_usdt, start_base
+
+    def graceful_pause(self) -> None:
+        """Mark session paused (keep orders on OKX so resume can continue).
+        Called on SIGINT/SIGTERM via main loop's exit handler."""
+        log.info("[PAUSE] marking session paused — orders remain on OKX")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                UPDATE live_session SET
+                    status = ?,
+                    ended_at = ?,
+                    last_dca_ts = ?,
+                    last_rebalance_ts = ?,
+                    current_trend = ?
+                WHERE status = ?
+            """, (self.STATUS_PAUSED, datetime.now(timezone.utc).isoformat(),
+                  self.last_dca_ts, self.last_rebalance_ts, self.current_trend,
+                  self.STATUS_RUNNING))
 
     def _grid_bounds(self, trend: str) -> tuple[float, float]:
         """Return (upper_pct, lower_pct) based on trend."""
@@ -294,6 +458,7 @@ class LiveMAGrid:
             self._save_fill(order["id"], order.get("average") or order.get("price") or 0,
                             order.get("filled") or 0, "buy", kind="dca")
             self.last_dca_ts = now_ts
+            self._persist_timer("last_dca_ts", now_ts)
             log.info(f"[DCA] bought ${amount:.2f} of {self.symbol}")
             return order
         except Exception as e:
@@ -331,9 +496,11 @@ class LiveMAGrid:
         mark = self.executor.fetch_ticker(self.symbol)["last"]
         self._save_trend(trend, spread, mark)
         self.last_rebalance_ts = now_ts
+        self._persist_timer("last_rebalance_ts", now_ts)
 
         if trend == self.current_trend:
             log.info(f"[MA] trend unchanged: {trend} (spread {spread:+.2f}%)")
+            self._persist_timer("current_trend", trend)
             return None
 
         log.warning(f"[MA] TREND CHANGE: {self.current_trend} → {trend}  (spread {spread:+.2f}%)")
@@ -349,6 +516,7 @@ class LiveMAGrid:
                 except Exception as e:
                     log.error(f"[MA] cancel chunk failed: {e}")
         self.current_trend = trend
+        self._persist_timer("current_trend", trend)
 
         # Rebuild buys around current mark with new asymmetric range + DCA size
         upper_pct, lower_pct = self._grid_bounds(trend)
@@ -424,4 +592,8 @@ class LiveMAGrid:
             else:
                 log.info(f"[KILL] nothing to sell (free={coin_free}, cap={max_sell_amount})")
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("UPDATE live_session SET status='stopped' WHERE status='running'")
+            conn.execute(
+                "UPDATE live_session SET status=?, ended_at=? WHERE status IN (?, ?)",
+                (self.STATUS_STOPPED, datetime.now(timezone.utc).isoformat(),
+                 self.STATUS_RUNNING, self.STATUS_PAUSED),
+            )
