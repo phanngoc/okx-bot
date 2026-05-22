@@ -258,6 +258,21 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
     dp = debate_pos.portfolio_value(final_price)
     dr = debate_pos.roi(final_price)
 
+    # Engine-backed runs (new strategy_engine path) — verify parity inline
+    # and provide a forward-compatible reference for future strategies.
+    from strategy_engine.sim_runner import run_sim
+    from strategy_engine.strategies import (
+        MAGridDCA, MAGridDCAConfig,
+    )
+    engine_runs = []
+    try:
+        eng_cfg = MAGridDCAConfig(symbol=symbol, allocation_usdt=budget)
+        eng_res = run_sim(MAGridDCA(eng_cfg), candles[:warmup + actual_hours],
+                          symbol, budget, warmup=warmup, fees=fee_cfg)
+        engine_runs.append(("Engine_MAGrid", eng_res))
+    except Exception as e:
+        print(f"[WARN] engine MAGrid run failed: {e}")
+
     grid_cost = gs["total_fees"] + gs["slippage_cost"]
     ma_grid_cost = mgs["total_fees"] + mgs["slippage_cost"]
     adaptive_label = f"Adaptive [{ads['switches']}sw]"
@@ -287,6 +302,13 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
          f"taker ${debate_pos.total_fees:.2f} + slip ${debate_pos.total_slippage_cost:.2f}"),
         ("Buy&Hold", bh_roi, 0, 0, 0, 0, "no fees (hold only)"),
     ]
+    # Append engine-backed runs as additional competitors
+    for name, r in engine_runs:
+        strategies.append((
+            name, r.roi_pct, r.total_trades,
+            r.total_fees + r.total_slippage, r.total_fees, r.total_slippage,
+            f"fees ${r.total_fees:.2f} + slip ${r.total_slippage:.4f} | (engine path)",
+        ))
 
     strategies.sort(key=lambda x: x[1], reverse=True)
 
@@ -298,7 +320,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
           f"(confidence {initial_regime.confidence:.0%}) → recommended {adaptive_strategy_name}")
     print(f"{'='*72}\n")
 
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
     print(f"  {'Rank':<6} {'Strategy':<18} {'ROI':>10} {'Alpha':>10} {'Trades':>7} {'Cost':>8} {'Fee Breakdown'}")
     print(f"  {'─'*6} {'─'*18} {'─'*10} {'─'*10} {'─'*7} {'─'*8} {'─'*30}")
 

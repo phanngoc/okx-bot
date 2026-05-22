@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Main entry point for the live MA_Grid+DCA trader.
+"""Live MA_Grid+DCA trader — Engine-based main loop.
+
+Uses the unified strategy_engine: MAGridDCA Strategy + OkxLiveExecutor.
+Same code path as backtest (arena), with broker I/O swapped from SimExecutor
+to OkxLiveExecutor.
 
 Usage:
   python live_trader.py              # run with defaults from .env
-  python live_trader.py --once       # do one tick (setup + 1 health check) and exit
-  python live_trader.py --shutdown   # cancel all + market-sell + exit (USE WITH CARE)
-  python live_trader.py --status     # print current state without trading
-
-Pre-flight checks:
-  1. Auth succeeds (fetch_balance)
-  2. Allocation ≤ free USDT
-  3. Symbol exists
-  4. STOP_NOW file not present
+  python live_trader.py --once       # one tick (setup + 1 health check) then exit
+  python live_trader.py --shutdown   # cancel all + mark session stopped (no liquidation)
+  python live_trader.py --status     # read-only status snapshot
 """
 
 import argparse
@@ -25,9 +23,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ma_grid_live import DCAConfig, GridConfig, LiveMAGrid, MAConfig
 from okx_executor import OkxExecutor
+from okx_live_executor import LiveSessionDB, OkxLiveExecutor
 from risk_monitor import RiskConfig, RiskMonitor, StopSignal
+from strategy_engine import Engine
+from strategy_engine.strategies import MAGridDCA, MAGridDCAConfig
+from strategy_engine.types import PriceTick
 
 
 STOP_FLAG = False
@@ -47,54 +48,48 @@ def setup_logging(level: str = "INFO"):
     log_dir = Path("data")
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / "live_trader.log"
-    handlers = [
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_file),
-    ]
     logging.basicConfig(
         level=getattr(logging, level.upper()),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        handlers=handlers,
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file),
+        ],
     )
 
 
-def preflight(executor: OkxExecutor, symbol: str, allocation: float, is_resume: bool = False) -> bool:
-    """Verify environment + auth before trading.
-    On resume: skip USDT check (funds are intentionally locked in existing grid orders)."""
+def preflight(okx: OkxExecutor, symbol: str, allocation: float, is_resume: bool) -> bool:
     log = logging.getLogger("preflight")
     if Path("STOP_NOW").exists():
         log.error("STOP_NOW file present — refuse to start")
         return False
     try:
-        bal = executor.fetch_balance()
+        bal = okx.fetch_balance()
     except Exception as e:
         log.error(f"fetch_balance failed: {e}")
         return False
+    free_usdt = bal.get("USDT", {}).get("free", 0.0)
     if is_resume:
-        log.info(f"preflight (resume) OK — symbol={symbol}  alloc=${allocation:.2f} "
-                 f"(USDT free=${bal.get('USDT', {}).get('free', 0):.2f}, locked in existing orders)")
+        log.info(f"preflight (resume) OK — symbol={symbol}  alloc=${allocation:.2f}  "
+                 f"free=${free_usdt:.2f} (locked in existing orders)")
     else:
-        cash = bal.get("USDT", {}).get("free", 0.0)
-        if cash < allocation:
-            log.error(f"insufficient USDT for fresh start: free=${cash:.2f} < allocation=${allocation:.2f}")
+        if free_usdt < allocation:
+            log.error(f"insufficient USDT for fresh start: free=${free_usdt:.2f} < ${allocation:.2f}")
             return False
-        log.info(f"preflight (fresh) OK — free=${cash:.2f}  allocation=${allocation:.2f}  symbol={symbol}")
-    log.info(f"mode: {'DEMO' if executor.cfg.demo else 'LIVE — real money'}")
+        log.info(f"preflight (fresh) OK — free=${free_usdt:.2f}  alloc=${allocation:.2f}  symbol={symbol}")
+    log.info(f"mode: {'DEMO' if okx.cfg.demo else 'LIVE — real money'}")
     return True
 
 
-def cmd_status(executor: OkxExecutor, symbol: str, allocation: float):
+def cmd_status(okx: OkxExecutor, symbol: str):
     log = logging.getLogger("status")
-    bal = executor.fetch_balance()
-    equity = executor.equity_usdt(symbol)
-    open_orders = executor.fetch_open_orders(symbol)
+    bal = okx.fetch_balance()
+    open_orders = okx.fetch_open_orders(symbol)
     log.info(f"=== STATUS ===")
-    log.info(f"  Mode:         {'DEMO' if executor.cfg.demo else 'LIVE'}")
+    log.info(f"  Mode:         {'DEMO' if okx.cfg.demo else 'LIVE'}")
     log.info(f"  Symbol:       {symbol}")
-    log.info(f"  Allocation:   ${allocation:.2f}")
-    log.info(f"  Equity:       ${equity:.2f}")
     for ccy, b in bal.items():
-        log.info(f"  {ccy:>5} : free={b['free']:.6f}  used={b['used']:.6f}  total={b['total']:.6f}")
+        log.info(f"  {ccy:>5}: free={b['free']:.6f}  used={b['used']:.6f}  total={b['total']:.6f}")
     log.info(f"  Open orders:  {len(open_orders)}")
     for o in open_orders[:5]:
         log.info(f"    {o['side']} {o['amount']} @ ${o['price']:,.2f}  id={o['id']}")
@@ -102,23 +97,22 @@ def cmd_status(executor: OkxExecutor, symbol: str, allocation: float):
         log.info(f"    ... +{len(open_orders)-5} more")
 
 
-def cmd_shutdown(executor: OkxExecutor, symbol: str):
-    """Emergency shutdown: cancel all bot orders. Does NOT market-sell
-    base by default — we don't know how much of the wallet balance was
-    bot-accumulated vs user pre-existing. Use --shutdown-sell-all to force."""
+def cmd_shutdown(okx: OkxExecutor, symbol: str, db: LiveSessionDB):
     log = logging.getLogger("shutdown")
     log.warning(f"=== EMERGENCY SHUTDOWN — {symbol} (cancel only, no liquidation) ===")
-    bot = LiveMAGrid(executor, symbol, allocation_usdt=0)
-    bot.kill_switch(market_sell_base=False)
+    try:
+        okx.cancel_all(symbol)
+    except Exception as e:
+        log.error(f"cancel_all failed: {e}")
+    db.mark_stopped()
     log.warning("=== shutdown complete (positions held — sell manually if needed) ===")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once",     action="store_true", help="run setup + 1 health check, exit")
-    parser.add_argument("--status",   action="store_true", help="print balance/orders, no trading")
-    parser.add_argument("--shutdown", action="store_true", help="cancel all + market-sell + exit")
-    parser.add_argument("--no-setup", action="store_true", help="skip initial grid (resume mode)")
+    parser.add_argument("--once",     action="store_true")
+    parser.add_argument("--status",   action="store_true")
+    parser.add_argument("--shutdown", action="store_true")
     args = parser.parse_args()
 
     load_dotenv()
@@ -126,122 +120,151 @@ def main():
     log = logging.getLogger("main")
 
     symbol     = os.getenv("SYMBOL", "BTC/USDT")
-    allocation = float(os.getenv("ALLOCATION_USDT", "500"))
+    allocation = float(os.getenv("ALLOCATION_USDT", "150"))
     interval   = int(os.getenv("HEALTH_CHECK_SEC", "30"))
+    base_ccy   = symbol.split("/")[0]
 
-    executor = OkxExecutor.from_env()
+    okx = OkxExecutor.from_env()
+    db  = LiveSessionDB()
 
     if args.status:
-        cmd_status(executor, symbol, allocation)
+        cmd_status(okx, symbol)
         return
 
     if args.shutdown:
-        cmd_shutdown(executor, symbol)
+        cmd_shutdown(okx, symbol, db)
         return
 
-    grid_cfg = GridConfig(
-        range_pct=float(os.getenv("GRID_RANGE_PCT", "5.0")),
+    # ----- Build strategy + executor + engine -----
+    strat_cfg = MAGridDCAConfig(
+        symbol=symbol,
+        allocation_usdt=allocation,
         num_grids=int(os.getenv("GRID_NUM", "20")),
+        range_pct=float(os.getenv("GRID_RANGE_PCT", "5.0")),
+        dca_interval_sec=float(os.getenv("DCA_INTERVAL_HOURS", "4")) * 3600,
+        dca_amount_usdt=float(os.getenv("DCA_AMOUNT_USDT", "10")),
+        rebalance_sec=float(os.getenv("MA_REBALANCE_HOURS", "6")) * 3600,
+        ma_threshold_pct=float(os.getenv("MA_THRESHOLD_PCT", "0.5")),
     )
-    dca_cfg = DCAConfig(
-        interval_hours=float(os.getenv("DCA_INTERVAL_HOURS", "4")),
-        amount_usdt=float(os.getenv("DCA_AMOUNT_USDT", "10")),
-        base_amount_usdt=float(os.getenv("DCA_AMOUNT_USDT", "10")),
-    )
-    ma_cfg = MAConfig(
-        rebalance_hours=int(os.getenv("MA_REBALANCE_HOURS", "6")),
-        threshold_pct=float(os.getenv("MA_THRESHOLD_PCT", "0.5")),
-    )
-    risk_cfg = RiskConfig(
+    strategy = MAGridDCA(strat_cfg)
+    executor = OkxLiveExecutor(okx, symbol, db=db,
+                              max_order_usdt=float(os.getenv("MAX_ORDER_USDT", "100")))
+    engine   = Engine(strategy=strategy, executor=executor)
+
+    risk = RiskMonitor(RiskConfig(
         start_balance=allocation,
         max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "20")),
         kill_loss_pct=float(os.getenv("KILL_LOSS_PCT", "35")),
         max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "7")),
-    )
+    ))
 
-    bot  = LiveMAGrid(executor, symbol, allocation, grid_cfg, dca_cfg, ma_cfg)
-    risk = RiskMonitor(risk_cfg)
+    # ----- State recovery -----
+    session = db.maybe_resume(symbol, allocation)
 
-    # State recovery: detect existing resumable session BEFORE preflight,
-    # so we know whether to enforce the USDT-free check (fresh) or skip it (resume).
-    resumable = bot.maybe_resume_session()
-
-    if not preflight(executor, symbol, allocation, is_resume=bool(resumable)):
+    if not preflight(okx, symbol, allocation, is_resume=bool(session)):
         sys.exit(1)
 
-    if resumable:
-        # Resume path: restore state from DB, reconcile with OKX
-        log.info(f"[MAIN] resumable session #{resumable['id']} detected — resuming "
-                 f"(skip --no-setup logic, no fresh grid placement)")
-        start_usdt, start_base = bot.resume_from(resumable)
-        log.info(f"[MAIN] equity baseline from session: USDT={start_usdt:.2f}  {bot.base_ccy}={start_base:.6f}")
+    if session:
+        # Resume path
+        log.info(f"[MAIN] resumable session #{session.id} detected — engine resume")
+        recon = executor.adopt_existing(session.started_at)
+        log.info(f"[MAIN] reconciliation: known={recon['known']}  "
+                 f"orphans={recon['orphans']}  missing={recon['missing']}")
+        # Hydrate strategy state
+        strategy.restore({
+            "current_trend": session.current_trend,
+            "entry_price":   session.entry_price,
+        })
+        # Hydrate engine timers from persisted timestamps
+        if session.last_dca_ts:
+            engine.last_fired["dca"] = session.last_dca_ts
+        if session.last_rebalance_ts:
+            engine.last_fired["rebalance"] = session.last_rebalance_ts
+        engine.setup_done = True   # skip re-setup
+        # Pre-feed price history for MA detection
+        recent_candles = okx.exchange.fetch_ohlcv(symbol, "1h", limit=120)
+        strategy.feed_history([c[4] for c in recent_candles])
+        db.mark_running(session.id)
+        start_usdt = session.start_usdt
+        start_base = session.start_base
+        log.info(f"[MAIN] equity baseline: USDT={start_usdt:.2f}  {base_ccy}={start_base:.6f}")
     else:
-        # Fresh path: snapshot wallet, place initial grid
-        _bal = executor.fetch_balance()
-        start_usdt = _bal.get("USDT", {}).get("total", 0.0)
-        start_base = _bal.get(bot.base_ccy, {}).get("total", 0.0)
-        log.info(f"[MAIN] fresh session — wallet snapshot: USDT={start_usdt:.2f}  "
-                 f"{bot.base_ccy}={start_base:.6f}")
-        if not args.no_setup:
-            bot.setup_initial_grid(start_usdt=start_usdt, start_base=start_base)
+        # Fresh session: snapshot wallet, then engine.step() will run on_setup
+        bal = okx.fetch_balance()
+        start_usdt = bal.get("USDT", {}).get("total", 0.0)
+        start_base = bal.get(base_ccy, {}).get("total", 0.0)
+        # Pre-feed MA history
+        recent_candles = okx.exchange.fetch_ohlcv(symbol, "1h", limit=120)
+        strategy.feed_history([c[4] for c in recent_candles])
+        ticker = okx.fetch_ticker(symbol)
+        entry_price = ticker["last"]
+        session_id = db.create_session(symbol, allocation, entry_price, start_usdt, start_base)
+        log.info(f"[MAIN] fresh session #{session_id} — wallet: USDT={start_usdt:.2f}  "
+                 f"{base_ccy}={start_base:.6f}  entry=${entry_price:,.2f}")
 
-    log.info(f"=== LIVE TRADER STARTED — health checks every {interval}s ===")
+    log.info(f"=== LIVE TRADER STARTED — engine path, tick every {interval}s ===")
 
     soft_stopped = False
     while not STOP_FLAG:
         try:
             now_ts = time.time()
+            ticker = okx.fetch_ticker(symbol)
+            tick = PriceTick(
+                symbol=symbol,
+                price=ticker["last"],
+                high=ticker.get("high") or ticker["last"],
+                low=ticker.get("low")  or ticker["last"],
+                ts=now_ts,
+            )
 
-            # 1. Fills
-            fills = bot.poll_fills()
-            if fills and not soft_stopped:
-                bot.replenish_after_fills(fills)
-
-            # 2. DCA
+            # Drive engine (handles fills, timers, intent execution)
             if not soft_stopped:
-                bot.do_dca(now_ts)
+                fills = engine.step(tick)
+            else:
+                fills = []   # soft-stop: drain fills but don't act
 
-            # 3. MA rebalance
-            if not soft_stopped:
-                bot.rebalance_check(now_ts)
+            # Persist timer + trend snapshot to DB after each step (cheap, ~ms)
+            db.persist_timer("last_dca_ts",       engine.last_fired.get("dca", 0.0))
+            db.persist_timer("last_rebalance_ts", engine.last_fired.get("rebalance", 0.0))
+            db.persist_timer("current_trend",     strategy.current_trend)
 
-            # 4. Risk monitor — equity ISOLATED to bot deltas
-            bal_now    = executor.fetch_balance()
-            cash       = bal_now.get("USDT", {}).get("total", 0.0)
-            coin       = bal_now.get(bot.base_ccy, {}).get("total", 0.0)
-            mark       = executor.fetch_ticker(symbol)["last"]
-            # Bot equity = allocation + USDT delta + (coin bought by bot) × mark
-            equity     = allocation + (cash - start_usdt) + (coin - start_base) * mark
-            bot._save_equity(equity, cash, coin, mark)
+            # Equity isolation: bot equity excludes pre-existing wallet PnL
+            bal = okx.fetch_balance()
+            cash = bal.get("USDT", {}).get("total", 0.0)
+            coin = bal.get(base_ccy, {}).get("total", 0.0)
+            mark = tick.price
+            equity = allocation + (cash - start_usdt) + (coin - start_base) * mark
+            db.save_equity(equity, cash, coin, mark)
 
             sig = risk.tick(equity, now_ts)
-            if sig == StopSignal.HARD_STOP or sig == StopSignal.MANUAL:
+            if sig in (StopSignal.HARD_STOP, StopSignal.MANUAL):
                 log.critical(f"[MAIN] {sig.value} → kill switch")
-                # Only sell what bot accumulated, never touch pre-existing balance
                 bot_coin_delta = max(0, coin - start_base)
-                bot.kill_switch(market_sell_base=True, max_sell_amount=bot_coin_delta)
+                executor._cancel_all_side(None)
+                if bot_coin_delta > 0:
+                    try:
+                        okx.exchange.create_order(
+                            symbol, "market", "sell", bot_coin_delta, None,
+                            {"tdMode": "cash", "clOrdId": f"kill{int(now_ts)}"[:32]},
+                        )
+                    except Exception as e:
+                        log.error(f"[MAIN] kill-sell failed: {e}")
+                db.mark_stopped()
                 break
-            elif sig == StopSignal.SOFT_STOP:
-                if not soft_stopped:
-                    log.warning(f"[MAIN] {sig.value} → cancelling buy-side orders, hold existing position")
-                    open_orders = executor.fetch_open_orders(symbol)
-                    buy_ids = [o["id"] for o in open_orders if o["side"] == "buy"]
-                    if buy_ids:
-                        try:
-                            executor.exchange.cancel_orders(buy_ids, symbol)
-                        except Exception as e:
-                            log.error(f"[MAIN] soft-stop cancel failed: {e}")
-                    soft_stopped = True
+            elif sig == StopSignal.SOFT_STOP and not soft_stopped:
+                log.warning(f"[MAIN] {sig.value} → cancel buys, hold existing")
+                executor._cancel_all_side("buy")
+                soft_stopped = True
             elif sig == StopSignal.DAILY_LOSS:
                 log.warning(f"[MAIN] daily loss circuit breaker active")
 
             s = risk.summary()
             log.info(f"[TICK] equity=${equity:.2f}  total_pnl={s['total_pnl_pct']:+.2f}%  "
                      f"dd={s['drawdown_pct']:+.2f}%  day={s['day_pnl_pct']:+.2f}%  "
-                     f"trend={bot.current_trend}  fills_this_tick={len(fills)}  signal={sig.value}")
+                     f"trend={strategy.current_trend}  fills={len(fills)}  signal={sig.value}")
 
         except Exception as e:
-            log.exception(f"[MAIN] tick failed — sleeping and retrying: {e}")
+            log.exception(f"[MAIN] tick failed: {e}")
 
         if args.once:
             log.info("[MAIN] --once: exiting after one tick")
@@ -249,13 +272,16 @@ def main():
 
         time.sleep(interval)
 
-    # Graceful exit: mark session 'paused' so restart can RESUME (keeps orders).
-    # Restart will reconcile and continue. Use --shutdown or kill-switch for cancel.
+    # Graceful pause: keep orders, mark paused — restart will resume
     log.info("[MAIN] graceful exit — pausing session (orders persist on OKX)")
     try:
-        bot.graceful_pause()
+        db.mark_paused({
+            "last_dca_ts":       engine.last_fired.get("dca", 0.0),
+            "last_rebalance_ts": engine.last_fired.get("rebalance", 0.0),
+            "current_trend":     strategy.current_trend,
+        })
     except Exception as e:
-        log.error(f"[MAIN] graceful_pause failed: {e}")
+        log.error(f"mark_paused failed: {e}")
     log.info("=== LIVE TRADER STOPPED (paused — restart to resume) ===")
 
 
