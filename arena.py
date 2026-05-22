@@ -262,6 +262,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
     # and provide a forward-compatible reference for future strategies.
     from strategy_engine.sim_runner import run_sim
     from strategy_engine.strategies import (
+        AdaptiveStrategy as EngineAdaptive, AdaptiveConfig,
         MAGridDCA, MAGridDCAConfig,
     )
     engine_runs = []
@@ -272,6 +273,15 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
         engine_runs.append(("Engine_MAGrid", eng_res))
     except Exception as e:
         print(f"[WARN] engine MAGrid run failed: {e}")
+    try:
+        ad_cfg = AdaptiveConfig(symbol=symbol, allocation_usdt=budget)
+        ad_strat = EngineAdaptive(ad_cfg)
+        ad_res = run_sim(ad_strat, candles[:warmup + actual_hours],
+                         symbol, budget, warmup=warmup, fees=fee_cfg)
+        ad_label = f"Engine_Adaptive [{len(ad_strat.switches)}sw]"
+        engine_runs.append((ad_label, ad_res))
+    except Exception as e:
+        print(f"[WARN] engine Adaptive run failed: {e}")
 
     grid_cost = gs["total_fees"] + gs["slippage_cost"]
     ma_grid_cost = mgs["total_fees"] + mgs["slippage_cost"]
@@ -320,7 +330,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate
           f"(confidence {initial_regime.confidence:.0%}) → recommended {adaptive_strategy_name}")
     print(f"{'='*72}\n")
 
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     print(f"  {'Rank':<6} {'Strategy':<18} {'ROI':>10} {'Alpha':>10} {'Trades':>7} {'Cost':>8} {'Fee Breakdown'}")
     print(f"  {'─'*6} {'─'*18} {'─'*10} {'─'*10} {'─'*7} {'─'*8} {'─'*30}")
 
