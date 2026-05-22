@@ -169,6 +169,11 @@ class AdaptiveStrategy:
     # ------------------------------------------------------------------
 
     def _switch_to(self, new_regime: RegimeResult, price: float, ts: float, warmup_prices: list = None) -> None:
+        """Soft switch: transfer coin + USDT balances to new strategy without liquidating.
+
+        Old approach: sell all coin → pay fees → restart with cash.
+        New approach: hand over existing balances → new strategy continues from same position.
+        """
         old_name = self.current_name
         kind, strat = self._active_kind, self._active
 
@@ -186,42 +191,43 @@ class AdaptiveStrategy:
             cur_fees     = strat.total_fees
             cur_slip     = strat.total_slippage
 
-        # Liquidate all coin via market sell (taker fee + slippage)
-        switch_fee  = 0.0
-        switch_slip = 0.0
-        new_budget  = usdt_balance
-        if coin_balance > 0:
-            slip       = price * (self.fees.slippage_pct / 100)
-            fill_price = price - slip
-            gross      = coin_balance * fill_price
-            switch_fee = gross * self.fees.taker_rate
-            switch_slip = slip * coin_balance
-            new_budget = usdt_balance + gross - switch_fee
+        # Accumulate lifetime costs from retired sub-strategy (no switch cost!)
+        self.lifetime_trades   += cur_trades
+        self.lifetime_fees     += cur_fees
+        self.lifetime_slippage += cur_slip
 
-        # Accumulate lifetime costs from retired sub-strategy + switch cost
-        self.lifetime_trades   += cur_trades + (1 if coin_balance > 0 else 0)
-        self.lifetime_fees     += cur_fees + switch_fee
-        self.lifetime_slippage += cur_slip + switch_slip
+        pv_at_switch = usdt_balance + coin_balance * price
 
-        # Log the switch
         self.switches.append(SwitchEvent(
             hour=self.candles_seen,
             from_strategy=old_name,
             to_strategy=new_regime.recommended_strategy,
             regime=new_regime.regime.value,
             price=price,
-            pv_at_switch=new_budget,
-            coin_sold=coin_balance,
-            switch_cost=switch_fee + switch_slip,
+            pv_at_switch=pv_at_switch,
+            coin_sold=0.0,
+            switch_cost=0.0,
         ))
 
-        # Create new sub-strategy with the liquidated cash as its budget
-        # and pre-feed it with recent price history so indicators have warmup
+        # Create new sub-strategy with TOTAL portfolio value as budget
+        # then inject the existing balances so it continues from same position
         self.current_name   = new_regime.recommended_strategy
         self.current_regime = new_regime.regime
         self._active_kind, self._active = self._create(
-            self.current_name, price, new_budget, warmup_prices, ts=ts)
+            self.current_name, price, pv_at_switch, warmup_prices, ts=ts)
+
+        # Inject existing balances into the new strategy
+        self._transfer_balances(self._active_kind, self._active, coin_balance, usdt_balance, price)
         self.last_switch_hour = self.candles_seen
+
+    def _transfer_balances(self, kind: str, strat, coin: float, usdt: float, price: float):
+        """Inject existing coin + USDT balances into a freshly created strategy."""
+        if kind == "grid":
+            strat.coin_balance = coin
+            strat.usdt_balance = usdt
+        else:
+            strat.coin_balance = coin
+            strat.usdt_balance = usdt
 
     # ------------------------------------------------------------------
     # Stats

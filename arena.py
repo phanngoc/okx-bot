@@ -31,7 +31,7 @@ from config import FeeConfig, GridConfig, DCAConfig
 from news_sentiment import analyze_sentiment
 from regime_detector import RegimeDetector, print_regime_report
 from strategies import TrailingDCA, BollingerBreakout, MeanReversion
-from strategy import GridDCAStrategy
+from strategy import GridDCAStrategy, MAGridDCAStrategy
 from technical import compute_all
 
 
@@ -56,7 +56,7 @@ def fetch_candles(exchange, symbol, timeframe="1h", limit=100, since_ms=None):
     return all_candles[:limit]
 
 
-def run_arena(symbol, budget, hours, debate_interval, since_date=None):
+def run_arena(symbol, budget, hours, debate_interval, since_date=None, no_debate=False):
     fee_cfg = FeeConfig()
     exchange = ccxt.okx({"enableRateLimit": True})
 
@@ -68,9 +68,9 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
         print(f"[HISTORICAL] Backtesting from {since_date}")
 
     print(f"\n{'='*72}")
-    print(f"  STRATEGY ARENA — 5 Strategies Head-to-Head")
+    print(f"  STRATEGY ARENA — 6 Strategies Head-to-Head")
     print(f"  Symbol:   {symbol}")
-    print(f"  Budget:   ${budget:,.0f} each (${budget*5:,.0f} total)")
+    print(f"  Budget:   ${budget:,.0f} each (${budget*8:,.0f} total)")
     print(f"  Duration: {hours:.0f}h ({hours/24:.1f} days)")
     print(f"  Fees:     Maker {fee_cfg.maker_rate*100:.2f}% | Taker {fee_cfg.taker_rate*100:.2f}% | Slip {fee_cfg.slippage_pct:.2f}%")
     print(f"{'='*72}\n")
@@ -111,9 +111,17 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
     grid.last_dca_time = trade_candles[0][0] / 1000
 
     # Pre-feed warmup closes to indicator-based strategies for fair comparison
-    # (otherwise BB_Breakout / MeanRevert would need ~40h of in-period warmup
-    # before they can issue any signals)
     warmup_closes = [c[4] for c in candles[:warmup]]
+
+    # MA-enhanced Grid+DCA
+    ma_grid = MAGridDCAStrategy(
+        entry_price=entry_price,
+        total_budget=budget,
+        fees=fee_cfg,
+        rebalance_interval=6,
+    )
+    ma_grid._grid.last_dca_time = trade_candles[0][0] / 1000
+    ma_grid.prices = list(warmup_closes)
 
     trailing = TrailingDCA(budget, fee_cfg)
     bb_breakout = BollingerBreakout(budget, fee_cfg)
@@ -134,9 +142,11 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
     # Debate setup
     from dual_runner import DebatePosition
     debate_pos = DebatePosition(usdt_balance=budget, total_budget=budget, fees=fee_cfg)
-    coin = symbol.split("/")[0]
-    sentiment = analyze_sentiment(coin)
     debate_count = 0
+    sentiment = None
+    if not no_debate:
+        coin = symbol.split("/")[0]
+        sentiment = analyze_sentiment(coin)
     interval_candles = max(1, int(debate_interval))
 
     report_every = max(1, actual_hours // 6)
@@ -154,6 +164,12 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
         grid.tick(high, ts)
         grid.tick(price, ts)
 
+        # MA Grid+DCA
+        ma_grid.tick(low, ts)
+        ma_grid.tick(high, ts)
+        ma_grid.tick(price, ts)
+        ma_grid.on_candle_close(price)
+
         # Trailing DCA
         trailing.tick(price, ts)
 
@@ -167,8 +183,8 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
         history_so_far = candles[:warmup + i + 1]
         adaptive.tick(candle, ts, history_so_far)
 
-        # Debate
-        if i % interval_candles == 0 and i > 0:
+        # Debate (skip if --no-debate)
+        if not no_debate and i % interval_candles == 0 and i > 0:
             window = candles[warmup + i - 50: warmup + i + 1]
             if len(window) >= 50:
                 ta = compute_all(window)
@@ -187,7 +203,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
                     if debate_pos.coin_balance * price > 5:
                         debate_pos.sell(price, sell_pct, ts)
 
-                # Re-fetch sentiment every 12h
+                coin = symbol.split("/")[0]
                 if debate_count % 4 == 0:
                     sentiment = analyze_sentiment(coin)
 
@@ -196,6 +212,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
             bh_pv = bh_qty * price
             bh_roi = (bh_pv - budget) / budget * 100
             gs = grid.stats(price)
+            mgs = ma_grid.stats(price)
             ts_stat = trailing.stats(price)
             bbs = bb_breakout.stats(price)
             mrs = mean_revert.stats(price)
@@ -213,6 +230,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
 
             print(f"  [{i:5d}h] ${price:>10,.2f}")
             print(f"    Grid+DCA    : ${gs['portfolio_value']:>10,.2f}  ROI {gs['roi_pct']:+.3f}%  trades {gs['total_trades']}")
+            print(f"    MA_Grid     : ${mgs['portfolio_value']:>10,.2f}  ROI {mgs['roi_pct']:+.3f}%  trades {mgs['total_trades']}  trend={mgs['trend']}")
             print(f"    TrailingDCA : ${ts_stat['portfolio_value']:>10,.2f}  ROI {ts_stat['roi_pct']:+.3f}%  trades {ts_stat['total_trades']}")
             print(f"    BB_Breakout : ${bbs['portfolio_value']:>10,.2f}  ROI {bbs['roi_pct']:+.3f}%  trades {bbs['total_trades']}")
             print(f"    MeanRevert  : ${mrs['portfolio_value']:>10,.2f}  ROI {mrs['roi_pct']:+.3f}%  trades {mrs['total_trades']}")
@@ -232,6 +250,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
     bh_roi = (bh_pv - budget) / budget * 100
 
     gs = grid.stats(final_price)
+    mgs = ma_grid.stats(final_price)
     ts_stat = trailing.stats(final_price)
     bbs = bb_breakout.stats(final_price)
     mrs = mean_revert.stats(final_price)
@@ -240,11 +259,16 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
     dr = debate_pos.roi(final_price)
 
     grid_cost = gs["total_fees"] + gs["slippage_cost"]
+    ma_grid_cost = mgs["total_fees"] + mgs["slippage_cost"]
     adaptive_label = f"Adaptive [{ads['switches']}sw]"
+    ma_grid_label = f"MA_Grid [{mgs['trend_changes']}t]"
     strategies = [
         ("Grid+DCA", gs["roi_pct"], gs["total_trades"], grid_cost,
          gs["total_fees"], gs["slippage_cost"],
          f"maker ${gs['maker_fees']:.2f} + taker ${gs['taker_fees']:.2f} + slip ${gs['slippage_cost']:.2f}"),
+        (ma_grid_label, mgs["roi_pct"], mgs["total_trades"], ma_grid_cost,
+         mgs["total_fees"], mgs["slippage_cost"],
+         f"maker ${mgs['maker_fees']:.2f} + taker ${mgs['taker_fees']:.2f} + slip ${mgs['slippage_cost']:.2f} | trend={mgs['trend']}"),
         ("TrailingDCA", ts_stat["roi_pct"], ts_stat["total_trades"], ts_stat["total_cost"],
          ts_stat["total_fees"], ts_stat["total_slippage"],
          f"taker ${ts_stat['total_fees']:.2f} + slip ${ts_stat['total_slippage']:.2f}"),
@@ -274,7 +298,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
           f"(confidence {initial_regime.confidence:.0%}) → recommended {adaptive_strategy_name}")
     print(f"{'='*72}\n")
 
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣"]
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     print(f"  {'Rank':<6} {'Strategy':<18} {'ROI':>10} {'Alpha':>10} {'Trades':>7} {'Cost':>8} {'Fee Breakdown'}")
     print(f"  {'─'*6} {'─'*18} {'─'*10} {'─'*10} {'─'*7} {'─'*8} {'─'*30}")
 
@@ -307,6 +331,15 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
               f"{ads['skipped_cooldown']} cooldown, "
               f"{ads['skipped_low_conf']} low-conf")
 
+    # MA Grid trend trail
+    if mgs["trend_history"]:
+        changes = [t for t in mgs["trend_history"] if t["changed"]]
+        print(f"\n  📊 MA_Grid trend trail ({mgs['rebalances']} rebalances, {len(changes)} trend changes):")
+        for t in changes[:10]:
+            arrow = "🟢" if t["trend"] == "bull" else ("🔴" if t["trend"] == "bear" else "⚪")
+            print(f"     [{t['hour']:>3}h] {arrow} {t['trend']:<8} spread={t['spread']:+.4f}%  "
+                  f"grid=[{t['lower_pct']:.0f}%↓ / {t['upper_pct']:.0f}%↑]  @ ${t['price']:,.0f}")
+
     # Initial regime pick verdict (the STATIC recommendation, not Adaptive)
     initial_pick_roi = next((r[1] for r in strategies if r[0] == adaptive_strategy_name), None)
     if initial_pick_roi is not None:
@@ -321,7 +354,7 @@ def run_arena(symbol, budget, hours, debate_interval, since_date=None):
     # Save to SQLite
     from db import get_conn, create_session, save_result, end_session
     conn = get_conn()
-    session_id = create_session(conn, symbol, budget * 5, actual_hours, entry_price, mode="backtest")
+    session_id = create_session(conn, symbol, budget * len(strategies), actual_hours, entry_price, mode="backtest")
     for rank, (name, roi, trades, cost, fees, slip, _) in enumerate(strategies, 1):
         alpha = roi - bh_roi
         pv = budget * (1 + roi / 100)
@@ -356,9 +389,11 @@ def main():
     parser.add_argument("--debate-interval", type=float, default=4.0)
     parser.add_argument("--since", default=None,
                         help="YYYY-MM-DD: start backtest from this historical date")
+    parser.add_argument("--no-debate", action="store_true",
+                        help="Skip debate LLM calls for faster backtests")
     args = parser.parse_args()
 
-    run_arena(args.symbol, args.budget, args.hours, args.debate_interval, args.since)
+    run_arena(args.symbol, args.budget, args.hours, args.debate_interval, args.since, args.no_debate)
 
 
 if __name__ == "__main__":

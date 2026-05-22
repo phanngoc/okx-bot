@@ -1,118 +1,118 @@
-# Grid + DCA Strategy
+# Chiến Lược Grid + DCA
 
-## Origin
+## Nguồn Gốc
 
-Grid Trading was popularized by **Pionex** (2019) and later adopted by **Bitsgap**, **3Commas**, and **KuCoin Bot**. The concept dates back to traditional forex markets where traders placed buy/sell orders at fixed price intervals to profit from range-bound movement. DCA (Dollar Cost Averaging) is one of the oldest investment strategies, formalized by Benjamin Graham in *The Intelligent Investor* (1949).
+Grid Trading được phổ biến bởi **Pionex** (2019) và sau đó được áp dụng bởi **Bitsgap**, **3Commas**, và **KuCoin Bot**. Khái niệm này có từ thị trường forex truyền thống, nơi các trader đặt lệnh mua/bán ở các khoảng giá cố định để kiếm lời từ chuyển động trong biên độ. DCA (Dollar Cost Averaging - bình quân giá) là một trong những chiến lược đầu tư cổ xưa nhất, được Benjamin Graham hệ thống hóa trong cuốn *The Intelligent Investor* (1949).
 
-Our implementation combines both: a grid of limit orders captures sideways volatility, while periodic DCA market buys provide steady accumulation regardless of price direction.
+Triển khai của chúng ta kết hợp cả hai: một lưới (grid) các lệnh limit để bắt biến động đi ngang, trong khi các lệnh DCA mua market định kỳ cung cấp khả năng tích lũy ổn định bất kể hướng giá.
 
-## How It Works
+## Cách Hoạt Động
 
-### Grid Component (65% of budget)
+### Thành Phần Grid (65% ngân sách)
 
-1. At initialization, the strategy calculates a price range: `entry_price +/- 5%`
-2. This range is divided into 20 equal levels (grid lines)
-3. **Buy orders** are placed below entry price, **sell orders** above
-4. Each grid order uses $50 USDT
-5. When a buy fills, a new sell order is placed one grid level above (and vice versa)
-6. Grid orders are **limit orders** = **maker fee (0.08%)**, no slippage
+1. Khi khởi tạo, chiến lược tính toán biên độ giá: `entry_price +/- 5%`
+2. Biên độ này được chia thành 20 mức bằng nhau (đường lưới)
+3. **Lệnh mua** được đặt dưới giá vào, **lệnh bán** ở trên
+4. Mỗi lệnh grid sử dụng $50 USDT
+5. Khi một lệnh mua khớp, một lệnh bán mới được đặt ở mức lưới phía trên (và ngược lại)
+6. Lệnh grid là **lệnh limit** = **phí maker (0.08%)**, không có slippage
 
-The grid profits from the spread between buy and sell levels. In a $80,000 BTC price with 5% range, each grid level is ~$400 apart. Every complete buy-sell cycle on one level earns approximately:
-
-```
-$400 spread / $80,000 price = 0.5% gross per cycle
-- 0.08% maker fee (buy) - 0.08% maker fee (sell) = 0.34% net per cycle
-```
-
-### DCA Component (35% of budget)
-
-1. Every 4 hours, places a **market buy** for $30 USDT
-2. Uses **taker fee (0.10%)** + **slippage (0.02%)**
-3. Provides consistent accumulation on a schedule
-4. No sell logic -- DCA only accumulates
-
-### Budget Allocation
+Grid sinh lời từ chênh lệch giữa mức mua và mức bán. Với giá BTC $80,000 và biên độ 5%, mỗi mức lưới cách nhau ~$400. Mỗi chu kỳ mua-bán hoàn chỉnh trên một mức kiếm được khoảng:
 
 ```
-Total Budget: $2,000
-  Grid: $1,300 (65%) -- 26 grid levels @ $50 each
-  DCA:  $700  (35%) -- ~58 buys @ $30 over 72h+ (every 4h)
+$400 spread / $80,000 price = 0.5% gộp mỗi chu kỳ
+- 0.08% phí maker (mua) - 0.08% phí maker (bán) = 0.34% ròng mỗi chu kỳ
 ```
 
-## Parameters
+### Thành Phần DCA (35% ngân sách)
 
-| Parameter | Value | Description |
+1. Mỗi 4 giờ, đặt một **lệnh mua market** $30 USDT
+2. Sử dụng **phí taker (0.10%)** + **slippage (0.02%)**
+3. Cung cấp tích lũy ổn định theo lịch
+4. Không có logic bán -- DCA chỉ tích lũy
+
+### Phân Bổ Ngân Sách
+
+```
+Tổng Ngân Sách: $2,000
+  Grid: $1,300 (65%) -- 26 mức grid @ $50 mỗi cái
+  DCA:  $700  (35%) -- ~58 lần mua @ $30 trong 72h+ (mỗi 4h)
+```
+
+## Tham Số
+
+| Tham Số | Giá Trị | Mô Tả |
 |-----------|-------|-------------|
-| `price_range_pct` | 5.0% | Grid range above/below entry |
-| `num_grids` | 20 | Number of grid levels |
-| `investment_per_grid` | $50 | USDT per grid order |
-| `interval_hours` | 4.0 | DCA buy interval |
-| `amount_per_buy` | $30 | USDT per DCA buy |
+| `price_range_pct` | 5.0% | Biên độ grid trên/dưới giá vào |
+| `num_grids` | 20 | Số mức grid |
+| `investment_per_grid` | $50 | USDT mỗi lệnh grid |
+| `interval_hours` | 4.0 | Khoảng cách giữa các lần mua DCA |
+| `amount_per_buy` | $30 | USDT mỗi lần mua DCA |
 
-## Fee Model
+## Mô Hình Phí
 
-| Order Type | Fee | Slippage | Total Cost |
+| Loại Lệnh | Phí | Slippage | Tổng Chi Phí |
 |------------|-----|----------|------------|
-| Grid (limit) | 0.08% maker | None | 0.08% |
+| Grid (limit) | 0.08% maker | Không | 0.08% |
 | DCA (market) | 0.10% taker | 0.02% | 0.12% |
 
-Grid orders are significantly cheaper because they add liquidity to the order book. This is a real advantage over strategies that only use market orders.
+Lệnh grid rẻ hơn đáng kể vì chúng cung cấp thanh khoản cho sổ lệnh. Đây là lợi thế thực sự so với các chiến lược chỉ dùng lệnh market.
 
-## Strengths
+## Điểm Mạnh
 
-1. **Consistent in sideways markets**: Every price oscillation within the grid range triggers buy-sell cycles, generating small profits regardless of direction. This is the strategy's core edge.
+1. **Ổn định trong thị trường đi ngang**: Mỗi dao động giá trong biên độ grid kích hoạt chu kỳ mua-bán, tạo ra lợi nhuận nhỏ bất kể hướng. Đây là lợi thế cốt lõi của chiến lược.
 
-2. **Low fee structure**: Grid limit orders pay only maker fees (0.08%), the cheapest available. Most competing strategies pay taker fees (0.10%) + slippage.
+2. **Cấu trúc phí thấp**: Lệnh grid limit chỉ trả phí maker (0.08%), thấp nhất hiện có. Hầu hết chiến lược cạnh tranh phải trả phí taker (0.10%) + slippage.
 
-3. **Mechanical discipline**: No emotional decisions, no indicators to misinterpret. The grid executes systematically.
+3. **Kỷ luật cơ học**: Không có quyết định cảm tính, không có chỉ báo để hiểu sai. Grid thực thi một cách hệ thống.
 
-4. **High trade frequency**: In our 7-day arena test, Grid+DCA made **144 trades** -- far more than any other strategy. Each trade captures a small profit.
+4. **Tần suất giao dịch cao**: Trong thử nghiệm đấu trường 7 ngày, Grid+DCA thực hiện **144 giao dịch** -- nhiều hơn bất kỳ chiến lược nào khác. Mỗi giao dịch chốt một lợi nhuận nhỏ.
 
-5. **DCA smoothing**: Even if the grid range is wrong, DCA ensures ongoing accumulation at averaged prices.
+5. **Làm mượt với DCA**: Ngay cả khi biên độ grid sai, DCA vẫn đảm bảo tích lũy liên tục với giá trung bình.
 
-6. **Self-replenishing**: When a grid buy fills, a new sell is placed; when a sell fills, a new buy is placed. The grid regenerates itself.
+6. **Tự bổ sung**: Khi lệnh mua grid khớp, lệnh bán mới được đặt; khi lệnh bán khớp, lệnh mua mới được đặt. Grid tự tái tạo chính nó.
 
-## Weaknesses
+## Điểm Yếu
 
-1. **Bleeds in strong trends**: If price drops 10%+ (breaking below the grid), all buy orders fill but no sells execute. You're left holding a bag at higher average cost. In our test, the strategy went negative (-0.28%) during the 2.7% market drop.
+1. **Thua lỗ trong xu hướng mạnh**: Nếu giá giảm 10%+ (xuyên qua đáy grid), tất cả lệnh mua khớp nhưng không có lệnh bán nào thực thi. Bạn sẽ ôm vị thế với giá trung bình cao hơn. Trong thử nghiệm, chiến lược âm (-0.28%) khi thị trường giảm 2.7%.
 
-2. **Opportunity cost in strong rallies**: If BTC jumps 15%, the grid sells all positions early at lower levels. You capture only the grid-width profit, missing the bulk of the move. Buy&Hold would massively outperform.
+2. **Chi phí cơ hội trong các đợt tăng mạnh**: Nếu BTC nhảy 15%, grid bán hết vị thế sớm ở các mức thấp. Bạn chỉ bắt được lợi nhuận trong biên độ grid, bỏ lỡ phần lớn chuyển động. Buy&Hold sẽ vượt trội hơn rất nhiều.
 
-3. **High capital requirement**: 20 grid levels at $50 each ties up $1,000 in pending orders. Capital efficiency is poor -- most of the budget sits idle as unfilled orders.
+3. **Yêu cầu vốn cao**: 20 mức grid với $50 mỗi cái khóa $1,000 trong lệnh chờ. Hiệu quả sử dụng vốn kém -- phần lớn ngân sách nằm im dưới dạng lệnh chưa khớp.
 
-4. **Range dependency**: The 5% grid range is arbitrary. If volatility is 1%, the grid never triggers. If volatility is 15%, the grid is exhausted and becomes a one-way accumulator.
+4. **Phụ thuộc biên độ**: Biên độ grid 5% là tùy ý. Nếu biến động 1%, grid không bao giờ kích hoạt. Nếu biến động 15%, grid cạn kiệt và trở thành công cụ tích lũy một chiều.
 
-5. **DCA is always buying**: There's no sell-side DCA. In a bear market, DCA just keeps buying into falling prices, increasing losses.
+5. **DCA luôn mua**: Không có DCA bên bán. Trong thị trường gấu, DCA cứ tiếp tục mua khi giá giảm, làm tăng thua lỗ.
 
-6. **Accumulated fees on high frequency**: 144 trades at 0.08% each = $5.66 total cost. While each trade is cheap, the volume adds up.
+6. **Phí tích lũy do tần suất cao**: 144 giao dịch ở 0.08% mỗi cái = $5.66 tổng chi phí. Mặc dù mỗi giao dịch rẻ, nhưng khối lượng cộng dồn lại đáng kể.
 
-## Ideal Market Conditions
+## Điều Kiện Thị Trường Lý Tưởng
 
-- **Best**: Sideways/ranging market with 3-8% oscillations (choppy, no clear trend)
-- **Good**: Mild uptrend with regular pullbacks
-- **Poor**: Strong downtrend (buys fill, sells don't)
-- **Worst**: Parabolic rally (sells early, misses most of the move)
+- **Tốt nhất**: Thị trường đi ngang/biên độ với dao động 3-8% (rung lắc, không có xu hướng rõ ràng)
+- **Tốt**: Xu hướng tăng nhẹ với các đợt điều chỉnh đều đặn
+- **Kém**: Xu hướng giảm mạnh (lệnh mua khớp, bán không khớp)
+- **Tệ nhất**: Tăng giá parabol (bán sớm, bỏ lỡ hầu hết chuyển động)
 
-## Arena Results (7-day BTC/USDT backtest)
+## Kết Quả Đấu Trường (Backtest BTC/USDT 7 ngày)
 
 ```
 Market: $80,267 -> $78,088 (-2.72%)
 Grid+DCA:  ROI -0.28%  |  Alpha +2.43%  |  144 trades  |  Cost $5.66
 ```
 
-Grid+DCA placed 3rd in the arena but generated massive alpha vs Buy&Hold (+2.43%). The strategy preserved capital far better than holding during the drop. Its high trade count means it was actively capturing small profits throughout the period.
+Grid+DCA xếp thứ 3 trong đấu trường nhưng tạo ra alpha lớn so với Buy&Hold (+2.43%). Chiến lược bảo vệ vốn tốt hơn nhiều so với việc giữ trong đợt giảm. Số lượng giao dịch cao cho thấy nó đang chủ động chốt các lợi nhuận nhỏ trong suốt thời gian.
 
-## Bot Equivalents
+## Bot Tương Đương
 
-| Bot | Feature Name | Key Difference |
+| Bot | Tên Tính Năng | Khác Biệt Chính |
 |-----|-------------|----------------|
-| **Pionex** | Grid Trading Bot | Supports arithmetic + geometric grids |
-| **Bitsgap** | GRID Bot | Has "trailing up" to shift grid with trend |
-| **3Commas** | Grid Bot | Integrates with 18+ exchanges |
-| **KuCoin** | Spot Grid | AI parameter suggestion based on volatility |
+| **Pionex** | Grid Trading Bot | Hỗ trợ grid cấp số cộng + cấp số nhân |
+| **Bitsgap** | GRID Bot | Có "trailing up" để dịch chuyển grid theo xu hướng |
+| **3Commas** | Grid Bot | Tích hợp với 18+ sàn giao dịch |
+| **KuCoin** | Spot Grid | Đề xuất tham số bằng AI dựa trên biến động |
 
-## When to Use
+## Khi Nào Nên Dùng
 
-Use Grid+DCA when you believe the market will be **range-bound** for the foreseeable future. It's the "boring but reliable" strategy -- it won't win big, but it won't lose big either. The combination of grid trading (profits from oscillation) and DCA (profits from time-averaged buying) provides a balanced approach.
+Dùng Grid+DCA khi bạn tin rằng thị trường sẽ **đi trong biên độ** trong tương lai gần. Đây là chiến lược "nhàm chán nhưng đáng tin cậy" -- nó không thắng lớn, nhưng cũng không thua lớn. Sự kết hợp giữa grid trading (lợi nhuận từ dao động) và DCA (lợi nhuận từ mua bình quân theo thời gian) cung cấp cách tiếp cận cân bằng.
 
-Avoid it when you have strong directional conviction. If you think BTC will rally 20%, just buy and hold. If you think it'll crash 20%, stay in USDT.
+Tránh nó khi bạn có niềm tin định hướng mạnh. Nếu bạn nghĩ BTC sẽ tăng 20%, chỉ cần mua và giữ. Nếu bạn nghĩ nó sẽ crash 20%, hãy ở trong USDT.

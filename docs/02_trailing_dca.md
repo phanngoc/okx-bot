@@ -1,142 +1,142 @@
-# Trailing DCA Strategy
+# Chiến Lược Trailing DCA
 
-## Origin
+## Nguồn Gốc
 
-This strategy is directly inspired by **3Commas** DCA Bot, the most popular automated trading bot for crypto (500K+ users). The core concept was adapted from traditional stock DCA but enhanced with **safety orders** (scale-in on dips) and **trailing take-profit** (lock gains by riding momentum up, then sell on pullback).
+Chiến lược này lấy cảm hứng trực tiếp từ **3Commas** DCA Bot, bot giao dịch tự động phổ biến nhất cho crypto (hơn 500K người dùng). Khái niệm cốt lõi được điều chỉnh từ DCA chứng khoán truyền thống nhưng được nâng cấp với **safety orders** (mở rộng vị thế khi giảm) và **trailing take-profit** (chốt lời bằng cách đi theo momentum lên, sau đó bán khi pullback).
 
-**Pionex** offers a similar "DCA Bot" and **Bitsgap** has a "DCA Bot" with "trailing" mode. The idea comes from **Martingale theory** -- doubling down on losing positions, but with bounded risk through position sizing limits.
+**Pionex** cung cấp một "DCA Bot" tương tự và **Bitsgap** có "DCA Bot" với chế độ "trailing". Ý tưởng đến từ **lý thuyết Martingale** -- gấp đôi xuống vị thế thua, nhưng với rủi ro có giới hạn thông qua giới hạn kích thước vị thế.
 
-## How It Works
+## Cách Hoạt Động
 
-### Phase 1: Base Order
+### Giai Đoạn 1: Lệnh Cơ Sở (Base Order)
 
-On the first tick, the bot places a **base order** using 10% of the budget ($200 of $2,000). This establishes the initial position.
+Trên tick đầu tiên, bot đặt một **lệnh cơ sở** sử dụng 10% ngân sách ($200 trong $2,000). Điều này thiết lập vị thế ban đầu.
 
-### Phase 2: Safety Orders (Scaling In)
+### Giai Đoạn 2: Safety Orders (Mở Rộng Vào)
 
-As price drops from entry, the bot places increasingly larger buy orders:
+Khi giá giảm từ điểm vào, bot đặt các lệnh mua ngày càng lớn hơn:
 
 ```
-Safety Order #1: -3%  from entry -> buy $200 * 1.5^0 = $200
-Safety Order #2: -6%  from entry -> buy $200 * 1.5^1 = $300
-Safety Order #3: -12% from entry -> buy $200 * 1.5^2 = $450
-Safety Order #4: -20% from entry -> buy $200 * 1.5^3 = $675
-Safety Order #5: -30% from entry -> buy $200 * 1.5^4 = $1,012
+Safety Order #1: -3%  từ entry -> mua $200 * 1.5^0 = $200
+Safety Order #2: -6%  từ entry -> mua $200 * 1.5^1 = $300
+Safety Order #3: -12% từ entry -> mua $200 * 1.5^2 = $450
+Safety Order #4: -20% từ entry -> mua $200 * 1.5^3 = $675
+Safety Order #5: -30% từ entry -> mua $200 * 1.5^4 = $1,012
 ```
 
-Each safety order is **1.5x larger** than the previous one. This aggressive scaling lowers the average entry price quickly, so a smaller bounce is needed to reach profit.
+Mỗi safety order **lớn hơn 1.5 lần** so với cái trước. Việc mở rộng tích cực này nhanh chóng hạ giá vào trung bình, nên chỉ cần một cú bật nhỏ hơn là đạt được lợi nhuận.
 
-**Example**: If BTC enters at $80,000 and drops to $72,000 (-10%), safety orders #1-#3 fire. The average cost might be ~$76,000. A bounce to $77,520 (+2% from average) triggers take-profit -- even though the price is still 3% below entry.
+**Ví dụ**: Nếu BTC vào ở $80,000 và giảm xuống $72,000 (-10%), safety orders #1-#3 kích hoạt. Giá trung bình có thể là ~$76,000. Một cú bật lên $77,520 (+2% từ trung bình) kích hoạt take-profit -- ngay cả khi giá vẫn thấp hơn 3% so với điểm vào.
 
-### Phase 3: Trailing Take-Profit
+### Giai Đoạn 3: Trailing Take-Profit
 
-When unrealized profit reaches the **take-profit threshold** (2% above average cost):
+Khi lợi nhuận chưa thực hiện đạt **ngưỡng take-profit** (2% trên giá trung bình):
 
-1. Trailing mode activates, tracking the price peak
-2. If price continues rising, the peak updates (locking more profit)
-3. If price drops **0.8% from the peak**, the bot sells 100% of the position
-4. After selling, the entire cycle resets and waits for the next entry
+1. Chế độ trailing được kích hoạt, theo dõi đỉnh giá
+2. Nếu giá tiếp tục tăng, đỉnh được cập nhật (chốt thêm lợi nhuận)
+3. Nếu giá giảm **0.8% từ đỉnh**, bot bán 100% vị thế
+4. Sau khi bán, toàn bộ chu kỳ reset và chờ điểm vào tiếp theo
 
 ```
 avg_cost = $76,000
 TP trigger = $77,520 (avg + 2%)
-Price hits $78,000 -> trailing peak = $78,000
-Price hits $78,500 -> trailing peak = $78,500
-Price drops to $77,872 (0.8% below peak) -> SELL ALL
-Profit: ~2.5% on the position
+Giá chạm $78,000 -> đỉnh trailing = $78,000
+Giá chạm $78,500 -> đỉnh trailing = $78,500
+Giá giảm xuống $77,872 (0.8% dưới đỉnh) -> BÁN HẾT
+Lợi nhuận: ~2.5% trên vị thế
 ```
 
-### Phase 4: Reset
+### Giai Đoạn 4: Reset
 
-After selling, the bot resets completely:
-- Entry price cleared
-- All safety order flags reset
-- Trailing state cleared
-- Ready for a new cycle
+Sau khi bán, bot reset hoàn toàn:
+- Giá vào được xóa
+- Tất cả cờ safety order reset
+- Trạng thái trailing được xóa
+- Sẵn sàng cho chu kỳ mới
 
-## Parameters
+## Tham Số
 
-| Parameter | Value | Description |
+| Tham Số | Giá Trị | Mô Tả |
 |-----------|-------|-------------|
-| `base_order_pct` | 10% | Budget % for initial buy |
-| `safety_deviations` | [3, 6, 12, 20, 30] | Price drop % to trigger each safety order |
-| `tp_pct` | 2.0% | Take-profit threshold above avg cost |
-| `trailing_pct` | 0.8% | Drop from peak to trigger sell |
-| `scale_factor` | 1.5x | Each safety order is 1.5x the previous |
+| `base_order_pct` | 10% | % ngân sách cho lệnh mua ban đầu |
+| `safety_deviations` | [3, 6, 12, 20, 30] | % giá giảm để kích hoạt mỗi safety order |
+| `tp_pct` | 2.0% | Ngưỡng take-profit trên giá trung bình |
+| `trailing_pct` | 0.8% | % giảm từ đỉnh để kích hoạt bán |
+| `scale_factor` | 1.5x | Mỗi safety order lớn gấp 1.5 lần trước đó |
 
-## Fee Model
+## Mô Hình Phí
 
-All orders are **market orders** (taker fee 0.10% + slippage 0.02%). The strategy trades infrequently -- in the 7-day test, it made only **1 trade** (the base order), meaning safety orders never triggered because the price didn't drop enough from entry.
+Tất cả lệnh đều là **lệnh market** (phí taker 0.10% + slippage 0.02%). Chiến lược giao dịch ít -- trong thử nghiệm 7 ngày, chỉ thực hiện **1 giao dịch** (lệnh cơ sở), nghĩa là safety order không bao giờ kích hoạt vì giá không giảm đủ từ điểm vào.
 
-## Strengths
+## Điểm Mạnh
 
-1. **Excellent in V-shaped recoveries**: This is the strategy's sweet spot. If price drops 10% then bounces back, the safety orders buy heavily at the bottom, and the trailing TP locks in profits on the way up. The aggressive scaling (1.5x) means you buy MORE at LOWER prices.
+1. **Xuất sắc trong các đợt hồi phục chữ V**: Đây là điểm ngọt của chiến lược. Nếu giá giảm 10% rồi bật trở lại, safety order mua mạnh ở đáy, và trailing TP chốt lợi nhuận khi đi lên. Việc mở rộng tích cực (1.5x) có nghĩa là bạn mua NHIỀU HƠN với giá THẤP HƠN.
 
-2. **Built-in risk management**: The position size is bounded. Maximum total investment across all safety orders:
+2. **Quản lý rủi ro tích hợp sẵn**: Kích thước vị thế có giới hạn. Tổng đầu tư tối đa qua tất cả safety order:
    ```
    $200 + $200 + $300 + $450 + $675 + $1,012 = $2,837
-   But budget is only $2,000, so later orders get capped.
+   Nhưng ngân sách chỉ có $2,000, nên các lệnh sau sẽ bị giới hạn.
    ```
 
-3. **Trailing TP captures momentum**: Instead of selling at a fixed target (which might sell right before a 5% rally), trailing TP rides the wave up and only exits on a confirmed reversal.
+3. **Trailing TP bắt được momentum**: Thay vì bán ở mục tiêu cố định (có thể bán ngay trước một đợt tăng 5%), trailing TP đi theo sóng lên và chỉ thoát khi có đảo chiều xác nhận.
 
-4. **Low trade frequency = low fees**: In the arena test, only $0.24 total cost. This is the cheapest active strategy.
+4. **Tần suất giao dịch thấp = phí thấp**: Trong thử nghiệm đấu trường, tổng chi phí chỉ $0.24. Đây là chiến lược chủ động rẻ nhất.
 
-5. **Automatic averaging**: The average cost calculation ensures you always know exactly how much profit you need to break even + TP.
+5. **Tính trung bình tự động**: Tính toán giá trung bình đảm bảo bạn luôn biết chính xác cần bao nhiêu lợi nhuận để hòa vốn + TP.
 
-6. **Full reset after profit**: Each cycle is independent. Past performance doesn't contaminate future decisions.
+6. **Reset hoàn toàn sau lợi nhuận**: Mỗi chu kỳ độc lập. Hiệu suất trong quá khứ không ảnh hưởng đến quyết định tương lai.
 
-## Weaknesses
+## Điểm Yếu
 
-1. **Frozen in slow bleeds**: If price drops slowly (1% per day for 30 days), safety orders trigger one by one, averaging down into a losing position. The price never bounces enough to trigger TP, and you're stuck holding an underwater position indefinitely.
+1. **Đóng băng trong các đợt giảm chậm**: Nếu giá giảm chậm (1% mỗi ngày trong 30 ngày), safety order kích hoạt từng cái một, hạ trung bình vào một vị thế thua lỗ. Giá không bao giờ bật đủ để kích hoạt TP, và bạn bị mắc kẹt trong vị thế dưới nước vô thời hạn.
 
-2. **Inactive in mild markets**: In the arena test, the price only moved -2.7% from entry over 7 days. Only the base order triggered, and the TP never hit. The strategy was effectively idle -- $200 invested, $1,800 sitting as cash. ROI: -0.28%.
+2. **Bất động trong thị trường nhẹ nhàng**: Trong thử nghiệm đấu trường, giá chỉ chuyển động -2.7% từ điểm vào trong 7 ngày. Chỉ có lệnh cơ sở kích hoạt, và TP không bao giờ chạm. Chiến lược về cơ bản đứng yên -- $200 đầu tư, $1,800 ngồi không. ROI: -0.28%.
 
-3. **One direction only (long)**: There's no short-side logic. In a confirmed bear market, the bot keeps buying dips that keep dipping.
+3. **Chỉ một chiều (long)**: Không có logic bên short. Trong thị trường gấu xác nhận, bot cứ mua các đợt dip mà tiếp tục dip.
 
-4. **Martingale risk**: The 1.5x scaling means late safety orders are very large. If all 5 fire, you've deployed your entire budget at a moment of maximum fear. If the price drops further, you're fully exposed with no cash left.
+4. **Rủi ro Martingale**: Mở rộng 1.5x có nghĩa là safety order muộn rất lớn. Nếu cả 5 đều kích hoạt, bạn đã triển khai toàn bộ ngân sách vào thời điểm sợ hãi tối đa. Nếu giá giảm thêm, bạn hoàn toàn rủi ro mà không còn tiền mặt.
 
-5. **No partial exits**: The trailing TP sells 100% of the position. There's no concept of taking partial profits or scaling out, which could be more profitable in certain scenarios.
+5. **Không thoát từng phần**: Trailing TP bán 100% vị thế. Không có khái niệm chốt lời từng phần hay thoát dần, điều có thể có lợi hơn trong một số tình huống.
 
-6. **Gap risk**: In crypto, flash crashes can blow past all safety order levels in minutes. You might go from entry to -35% instantly, deploying all capital at a single (bad) price level.
+6. **Rủi ro gap**: Trong crypto, flash crash có thể xuyên qua tất cả các mức safety order trong vài phút. Bạn có thể đi từ điểm vào đến -35% ngay lập tức, triển khai toàn bộ vốn ở một mức giá (xấu) duy nhất.
 
-## Ideal Market Conditions
+## Điều Kiện Thị Trường Lý Tưởng
 
-- **Best**: Sharp dips followed by V-shaped recoveries (flash crashes, FUD events that reverse)
-- **Good**: Regular oscillations with 5-15% swings
-- **Poor**: Slow steady decline (safety orders fire one by one, no recovery)
-- **Worst**: Prolonged bear market (maximum capital deployed at worst prices)
+- **Tốt nhất**: Các đợt giảm mạnh theo sau bởi hồi phục chữ V (flash crash, sự kiện FUD đảo chiều)
+- **Tốt**: Dao động đều đặn với biên độ 5-15%
+- **Kém**: Giảm chậm và đều (safety order kích hoạt từng cái, không hồi phục)
+- **Tệ nhất**: Thị trường gấu kéo dài (vốn được triển khai tối đa ở giá tệ nhất)
 
-## Arena Results (7-day BTC/USDT backtest)
+## Kết Quả Đấu Trường (Backtest BTC/USDT 7 ngày)
 
 ```
 Market: $80,267 -> $78,088 (-2.72%)
 TrailingDCA:  ROI -0.28%  |  Alpha +2.43%  |  1 trade  |  Cost $0.24
 ```
 
-Placed 2nd in the arena -- essentially tied with Grid+DCA. However, this was a deceptive result: the strategy was mostly idle (only the base order of $200 was invested). The remaining $1,800 was in USDT, which naturally protected the portfolio value during the downturn. In a sense, TrailingDCA "won" by not playing.
+Xếp thứ 2 trong đấu trường -- về cơ bản hòa với Grid+DCA. Tuy nhiên, đây là kết quả gây hiểu lầm: chiến lược chủ yếu đứng yên (chỉ có lệnh cơ sở $200 được đầu tư). $1,800 còn lại nằm trong USDT, điều này tự nhiên bảo vệ giá trị danh mục trong đợt giảm. Theo một nghĩa nào đó, TrailingDCA "thắng" bằng cách không chơi.
 
-## Bot Equivalents
+## Bot Tương Đương
 
-| Bot | Feature Name | Key Difference |
+| Bot | Tên Tính Năng | Khác Biệt Chính |
 |-----|-------------|----------------|
-| **3Commas** | DCA Bot | The original; supports long/short, TradingView signals |
-| **Pionex** | DCA Bot | Simpler interface, built-in to exchange |
-| **Bitsgap** | DCA Bot | Trailing mode, integrated portfolio view |
-| **Cornix** | DCA Bot | Telegram-integrated for signal groups |
+| **3Commas** | DCA Bot | Bản gốc; hỗ trợ long/short, tín hiệu TradingView |
+| **Pionex** | DCA Bot | Giao diện đơn giản hơn, tích hợp sẵn trong sàn |
+| **Bitsgap** | DCA Bot | Chế độ trailing, view danh mục tích hợp |
+| **Cornix** | DCA Bot | Tích hợp Telegram cho các nhóm tín hiệu |
 
-## When to Use
+## Khi Nào Nên Dùng
 
-Use TrailingDCA when you expect **volatile but ultimately recovering** markets. It's ideal for:
-- Trading altcoins that have sharp drawdowns but tend to bounce
-- Holding during uncertain macro periods (safety orders buy the fear)
-- Running alongside a grid bot as a "crash insurance" strategy
+Dùng TrailingDCA khi bạn kỳ vọng thị trường **biến động nhưng cuối cùng phục hồi**. Lý tưởng cho:
+- Giao dịch altcoin có các đợt giảm mạnh nhưng có xu hướng bật lại
+- Giữ trong các giai đoạn vĩ mô không chắc chắn (safety order mua khi sợ hãi)
+- Chạy song song với grid bot như chiến lược "bảo hiểm crash"
 
-Avoid it in slow grinds down or in very calm markets where the safety orders never trigger and the capital sits idle.
+Tránh nó trong các đợt giảm chậm chạp hoặc trong thị trường rất yên ả nơi safety order không bao giờ kích hoạt và vốn ngồi không.
 
-## Optimization Ideas
+## Ý Tưởng Tối Ưu Hóa
 
-1. **Tighter safety deviations** for BTC (e.g., [1.5, 3, 6, 10, 15]) since BTC is less volatile than altcoins
-2. **Multiple cycles**: Allow the bot to restart after TP instead of waiting for the full duration
-3. **Scale factor tuning**: 1.5x is aggressive; 1.2x is safer for larger budgets
-4. **Time-based exit**: If no TP is hit after X hours, reduce position size instead of holding indefinitely
+1. **Safety deviation chặt hơn** cho BTC (ví dụ: [1.5, 3, 6, 10, 15]) vì BTC ít biến động hơn altcoin
+2. **Nhiều chu kỳ**: Cho phép bot khởi động lại sau TP thay vì chờ đủ thời gian
+3. **Điều chỉnh scale factor**: 1.5x là tích cực; 1.2x an toàn hơn cho ngân sách lớn
+4. **Thoát theo thời gian**: Nếu không có TP sau X giờ, giảm kích thước vị thế thay vì giữ vô thời hạn

@@ -1,154 +1,154 @@
-# Mean Reversion Strategy
+# Chiến Lược Mean Reversion
 
-## Origin
+## Nguồn Gốc
 
-Mean reversion is one of the oldest concepts in statistics, formulated by **Francis Galton** in 1886 as "regression toward the mean." In finance, the idea is that prices tend to return to their average value after extreme deviations. **Pairs trading** (a hedge fund staple since the 1980s at Morgan Stanley) and **statistical arbitrage** are both based on mean reversion.
+Mean reversion (hồi về trung bình) là một trong những khái niệm cổ xưa nhất trong thống kê, được **Francis Galton** đưa ra vào năm 1886 với tên "regression toward the mean". Trong tài chính, ý tưởng là giá có xu hướng quay trở lại giá trị trung bình sau những độ lệch cực đoan. **Pairs trading** (chủ lực của các hedge fund từ những năm 1980 tại Morgan Stanley) và **statistical arbitrage** đều dựa trên mean reversion.
 
-In crypto, **Hummingbot** (open-source market maker) and **Freqtrade** (Python bot framework) both implement mean reversion strategies. The approach is contrarian by nature: buy when others are fearful (oversold), sell when others are greedy (overbought).
+Trong crypto, **Hummingbot** (market maker mã nguồn mở) và **Freqtrade** (framework bot Python) đều triển khai chiến lược mean reversion. Cách tiếp cận này bản chất là trái chiều: mua khi người khác sợ hãi (quá bán), bán khi người khác tham lam (quá mua).
 
-## How It Works
+## Cách Hoạt Động
 
-### Core Principle
+### Nguyên Tắc Cốt Lõi
 
-The strategy buys when price is statistically "too low" and sells when it's "too high." It uses two confirmation signals and one market regime filter:
+Chiến lược mua khi giá "quá thấp" theo thống kê và bán khi "quá cao". Nó sử dụng hai tín hiệu xác nhận và một bộ lọc chế độ thị trường:
 
-**Buy Signal** (all three must be true):
-1. RSI < 30 (oversold -- momentum has exhausted to the downside)
-2. Price <= Lower Bollinger Band (price is statistically extreme -- 2 standard deviations below mean)
-3. ADX < 25 (market is ranging, not trending -- mean reversion works in ranges, not trends)
+**Tín Hiệu Mua** (cả ba phải đúng):
+1. RSI < 30 (quá bán -- momentum đã cạn kiệt phía xuống)
+2. Giá <= Lower Bollinger Band (giá ở mức cực đoan thống kê -- 2 độ lệch chuẩn dưới trung bình)
+3. ADX < 25 (thị trường đi ngang, không có xu hướng -- mean reversion hoạt động trong biên độ, không phải xu hướng)
 
-**Sell Signal** (either one):
-1. RSI > 70 (overbought -- momentum has exhausted to the upside)
-2. Price >= Upper Bollinger Band (price has reverted past the mean to the other extreme)
+**Tín Hiệu Bán** (một trong hai):
+1. RSI > 70 (quá mua -- momentum đã cạn kiệt phía lên)
+2. Giá >= Upper Bollinger Band (giá đã hồi vượt qua trung bình đến cực kia)
 
-**Emergency Stop**:
-- If price drops 3% below the lower Bollinger Band, sell 50% of position to limit losses
+**Stop Khẩn Cấp**:
+- Nếu giá giảm 3% dưới Lower Bollinger Band, bán 50% vị thế để giới hạn lỗ
 
-### The ADX Filter (Why This Matters)
+### Bộ Lọc ADX (Tại Sao Quan Trọng)
 
-The most critical component is the **ADX proxy** that filters out trending markets:
-
-```
-ADX proxy logic:
-  Price range in last 20 candles > 5% -> ADX = 40 (TRENDING, do not trade)
-  Price range in last 20 candles > 3% -> ADX = 25 (BORDERLINE, do not trade)
-  Price range in last 20 candles < 3% -> ADX = 15 (RANGING, trade allowed)
-```
-
-**Why this matters**: Mean reversion is WRONG during trends. If BTC is in a confirmed downtrend, an RSI of 28 doesn't mean "oversold bounce imminent" -- it means "trend is strong, will probably continue lower." The ADX filter prevents the strategy from catching falling knives.
-
-In the arena test, this filter was key: the strategy only traded during the calm, ranging periods and stayed out during the trending phase at the end (when BTC dropped from $80.5K to $78K).
-
-### Position Management
+Thành phần quan trọng nhất là **ADX proxy** lọc bỏ thị trường có xu hướng:
 
 ```
-Max positions: 5
-Position size: 20% of budget per entry ($400 each)
-Max exposure: 100% of budget (5 * 20%)
+Logic ADX proxy:
+  Biên độ giá trong 20 nến gần nhất > 5% -> ADX = 40 (CÓ XU HƯỚNG, không giao dịch)
+  Biên độ giá trong 20 nến gần nhất > 3% -> ADX = 25 (RANH GIỚI, không giao dịch)
+  Biên độ giá trong 20 nến gần nhất < 3% -> ADX = 15 (ĐI NGANG, cho phép giao dịch)
 ```
 
-Multiple positions can be open simultaneously at different price levels, providing a natural averaging effect.
+**Tại sao điều này quan trọng**: Mean reversion là SAI trong các xu hướng. Nếu BTC trong xu hướng giảm xác nhận, RSI 28 không có nghĩa là "sắp bật quá bán" -- nó có nghĩa là "xu hướng mạnh, có thể tiếp tục giảm thêm". Bộ lọc ADX ngăn chiến lược bắt dao rơi.
 
-## Parameters
+Trong thử nghiệm đấu trường, bộ lọc này là chìa khóa: chiến lược chỉ giao dịch trong các giai đoạn yên ả, đi ngang và đứng ngoài trong giai đoạn có xu hướng ở cuối (khi BTC giảm từ $80.5K xuống $78K).
 
-| Parameter | Value | Description |
+### Quản Lý Vị Thế
+
+```
+Số vị thế tối đa: 5
+Kích thước vị thế: 20% ngân sách mỗi lần vào ($400 mỗi cái)
+Mức rủi ro tối đa: 100% ngân sách (5 * 20%)
+```
+
+Nhiều vị thế có thể mở đồng thời ở các mức giá khác nhau, cung cấp hiệu ứng bình quân tự nhiên.
+
+## Tham Số
+
+| Tham Số | Giá Trị | Mô Tả |
 |-----------|-------|-------------|
-| `bb_period` | 20 | Bollinger Band lookback |
-| `rsi_period` | 14 | RSI lookback |
-| `rsi_buy` | 30 | Buy below this RSI |
-| `rsi_sell` | 70 | Sell above this RSI |
-| `position_pct` | 20% | Budget per position |
-| `max_positions` | 5 | Maximum concurrent positions |
+| `bb_period` | 20 | Lookback của Bollinger Band |
+| `rsi_period` | 14 | Lookback của RSI |
+| `rsi_buy` | 30 | Mua dưới RSI này |
+| `rsi_sell` | 70 | Bán trên RSI này |
+| `position_pct` | 20% | Ngân sách mỗi vị thế |
+| `max_positions` | 5 | Số vị thế đồng thời tối đa |
 
-## Fee Model
+## Mô Hình Phí
 
-All orders are **market orders**: taker fee 0.10% + slippage 0.02% = 0.12% per trade. The strategy made 10 trades in 7 days -- moderate frequency. Total cost: $5.31.
+Tất cả lệnh đều là **lệnh market**: phí taker 0.10% + slippage 0.02% = 0.12% mỗi giao dịch. Chiến lược thực hiện 10 giao dịch trong 7 ngày -- tần suất vừa phải. Tổng chi phí: $5.31.
 
-## Strengths
+## Điểm Mạnh
 
-1. **Won the arena**: MeanRevert was the only strategy with **positive ROI (+0.46%)** in a -2.72% market. This is significant -- in a down market, it didn't just lose less, it actually made money.
+1. **Thắng đấu trường**: MeanRevert là chiến lược duy nhất có **ROI dương (+0.46%)** trong thị trường -2.72%. Điều này đáng kể -- trong thị trường giảm, nó không chỉ thua ít hơn, mà thực sự kiếm tiền.
 
-2. **Statistical edge is well-established**: Mean reversion is one of the few market phenomena with strong academic backing. Prices do revert to their mean in ranging markets. This isn't a pattern-matching hope -- it's a statistical property of financial time series.
+2. **Lợi thế thống kê đã được khẳng định**: Mean reversion là một trong số ít hiện tượng thị trường có nền tảng học thuật mạnh. Giá thực sự hồi về trung bình trong thị trường đi ngang. Đây không phải là hy vọng dựa trên khớp mẫu -- đó là thuộc tính thống kê của chuỗi thời gian tài chính.
 
-3. **ADX filter prevents trend-following mistakes**: The biggest killer of mean reversion strategies is trading against a strong trend. The ADX filter correctly identifies when to sit out, which is arguably more important than knowing when to trade.
+3. **Bộ lọc ADX ngăn lỗi đi theo xu hướng**: Sát thủ lớn nhất của các chiến lược mean reversion là giao dịch ngược xu hướng mạnh. Bộ lọc ADX xác định chính xác khi nào nên đứng ngoài, điều có thể quan trọng hơn việc biết khi nào nên giao dịch.
 
-4. **Asymmetric risk/reward**: Buying at the lower Bollinger Band means you're buying at a 2-standard-deviation discount. If the statistical distribution holds, there's a ~95% probability that price will revert above the lower band.
+4. **Rủi ro/lợi nhuận bất đối xứng**: Mua tại Lower Bollinger Band nghĩa là bạn mua với mức giảm giá 2 độ lệch chuẩn. Nếu phân phối thống kê đúng, có ~95% xác suất giá sẽ hồi về trên lower band.
 
-5. **Multiple position averaging**: By allowing up to 5 positions, the strategy naturally averages into oversold conditions. If the first buy at RSI 28 is too early, subsequent buys at RSI 22 and RSI 18 lower the average cost.
+5. **Bình quân nhiều vị thế**: Bằng cách cho phép tối đa 5 vị thế, chiến lược tự nhiên bình quân vào các điều kiện quá bán. Nếu lần mua đầu tiên ở RSI 28 quá sớm, các lần mua tiếp theo ở RSI 22 và RSI 18 hạ giá trung bình.
 
-6. **Clear sell rules**: The sell at RSI > 70 or upper BB provides concrete exit points. No subjective "I think it's time to sell" decisions.
+6. **Quy tắc bán rõ ràng**: Bán ở RSI > 70 hoặc upper BB cung cấp điểm thoát cụ thể. Không có quyết định chủ quan "Tôi nghĩ đã đến lúc bán".
 
-## Weaknesses
+## Điểm Yếu
 
-1. **Dependent on range detection**: The ADX proxy is simplified -- it uses a crude price range calculation instead of the actual ADX indicator. This could miss trending markets that appear calm on a 20-candle window but are clearly trending on longer timeframes.
+1. **Phụ thuộc phát hiện biên độ**: ADX proxy được đơn giản hóa -- nó dùng tính toán biên độ giá thô thay vì chỉ báo ADX thực. Điều này có thể bỏ lỡ các thị trường có xu hướng trông yên ả trên cửa sổ 20 nến nhưng rõ ràng có xu hướng trên khung thời gian dài hơn.
 
-2. **Dangerous in regime changes**: Mean reversion works until it doesn't. When a market transitions from ranging to trending (e.g., after a major news event), the strategy's buys at "oversold" levels become losing trades in a new trend.
+2. **Nguy hiểm khi đổi chế độ**: Mean reversion hoạt động cho đến khi không. Khi thị trường chuyển từ đi ngang sang có xu hướng (ví dụ: sau sự kiện tin tức lớn), các lệnh mua "quá bán" của chiến lược trở thành giao dịch thua trong xu hướng mới.
 
-3. **The "knife catching" problem**: Even with the ADX filter, there are scenarios where the filter shows "ranging" but a fast crash is developing. The 3% emergency stop helps but only after you've already lost.
+3. **Vấn đề "bắt dao rơi"**: Ngay cả với bộ lọc ADX, có những tình huống bộ lọc hiển thị "đi ngang" nhưng một cú crash nhanh đang phát triển. Stop khẩn cấp 3% giúp ích nhưng chỉ sau khi bạn đã thua.
 
-4. **Slow in trending markets**: If BTC goes on a 30% rally, the strategy sits in USDT the entire time (ADX > 25, no trade). Buy&Hold would massively outperform during bull runs.
+4. **Chậm trong thị trường có xu hướng**: Nếu BTC tăng 30%, chiến lược ngồi trong USDT toàn bộ thời gian (ADX > 25, không giao dịch). Buy&Hold sẽ vượt trội hơn rất nhiều trong các đợt bull run.
 
-5. **RSI boundaries are fixed**: RSI < 30 works differently at different timescales. In a 1-hour chart, RSI < 30 might recover in hours. In a daily chart, it might take weeks. The fixed thresholds don't adapt to the timeframe.
+5. **Ngưỡng RSI cố định**: RSI < 30 hoạt động khác nhau ở các khung thời gian khác nhau. Trên biểu đồ 1 giờ, RSI < 30 có thể hồi phục trong vài giờ. Trên biểu đồ ngày, có thể mất nhiều tuần. Ngưỡng cố định không thích ứng với khung thời gian.
 
-6. **Full sell at overbought**: When RSI > 70, the strategy sells 100% of the position. But in strong uptrends (which the ADX filter might not catch immediately), RSI > 70 can persist for days while price keeps rising.
+6. **Bán hết khi quá mua**: Khi RSI > 70, chiến lược bán 100% vị thế. Nhưng trong xu hướng tăng mạnh (mà bộ lọc ADX có thể không bắt ngay), RSI > 70 có thể duy trì trong nhiều ngày khi giá vẫn tăng.
 
-## Ideal Market Conditions
+## Điều Kiện Thị Trường Lý Tưởng
 
-- **Best**: Choppy, range-bound market with clear support/resistance levels. BTC trading between $75K-$82K for weeks. Mean reversion is almost "free money" in this environment.
-- **Good**: Mild downtrend with regular oversold bounces (each bounce captured by buy signal)
-- **Poor**: Strong trending market in either direction (ADX filter keeps strategy idle)
-- **Worst**: Black swan crash that blows through all support levels (3% stop is too wide)
+- **Tốt nhất**: Thị trường rung lắc, đi trong biên độ với mức hỗ trợ/kháng cự rõ ràng. BTC giao dịch giữa $75K-$82K trong nhiều tuần. Mean reversion gần như "tiền miễn phí" trong môi trường này.
+- **Tốt**: Xu hướng giảm nhẹ với các cú bật quá bán đều đặn (mỗi cú bật được tín hiệu mua bắt)
+- **Kém**: Thị trường có xu hướng mạnh ở bất kỳ hướng nào (bộ lọc ADX giữ chiến lược đứng yên)
+- **Tệ nhất**: Black swan crash xuyên qua tất cả các mức hỗ trợ (stop 3% quá rộng)
 
-## Arena Results (7-day BTC/USDT backtest)
+## Kết Quả Đấu Trường (Backtest BTC/USDT 7 ngày)
 
 ```
 Market: $80,267 -> $78,088 (-2.72%)
 MeanRevert:  ROI +0.46%  |  Alpha +3.18%  |  10 trades  |  Cost $5.31
 ```
 
-**The arena winner.** Let's analyze why:
+**Người thắng đấu trường.** Hãy phân tích tại sao:
 
-### Trade Timeline
-- **0-56h**: 0 trades. Market was ranging mildly (+1.5% to +2%), but RSI never hit 30 and price never touched the lower BB. Strategy waited.
-- **84h**: 1 trade. Price dipped to $80,642 and RSI briefly hit oversold territory. Strategy bought.
-- **112h**: 4 trades. Market dropped to $79,361. Multiple buys triggered as price hit lower BB repeatedly. Average cost was lowered.
-- **140h**: 5 trades. Market recovered to $80,581. Some sells triggered at RSI > 70 or upper BB. ROI jumped to +1.18%.
-- **168h (final)**: 10 trades. Final price $78,088. Some late sells locked in profits, but the final drop reduced unrealized gains.
+### Lịch Sử Giao Dịch
+- **0-56h**: 0 giao dịch. Thị trường đi ngang nhẹ (+1.5% đến +2%), nhưng RSI không bao giờ chạm 30 và giá không bao giờ chạm lower BB. Chiến lược chờ.
+- **84h**: 1 giao dịch. Giá giảm xuống $80,642 và RSI briefly chạm vùng quá bán. Chiến lược mua.
+- **112h**: 4 giao dịch. Thị trường giảm xuống $79,361. Nhiều lệnh mua kích hoạt khi giá chạm lower BB nhiều lần. Giá trung bình được hạ xuống.
+- **140h**: 5 giao dịch. Thị trường hồi phục lên $80,581. Một số lệnh bán kích hoạt ở RSI > 70 hoặc upper BB. ROI nhảy lên +1.18%.
+- **168h (cuối)**: 10 giao dịch. Giá cuối $78,088. Một số lệnh bán muộn chốt lợi nhuận, nhưng cú giảm cuối làm giảm lợi nhuận chưa thực hiện.
 
-The strategy correctly identified the ranging period (hours 56-140) and traded it profitably. When the market broke down at the end, it had already taken profits on earlier trades.
+Chiến lược xác định chính xác giai đoạn đi ngang (giờ 56-140) và giao dịch nó có lãi. Khi thị trường gãy ở cuối, nó đã chốt lợi nhuận trên các giao dịch trước.
 
-## Bot Equivalents
+## Bot Tương Đương
 
-| Bot | Feature Name | Key Difference |
+| Bot | Tên Tính Năng | Khác Biệt Chính |
 |-----|-------------|----------------|
-| **Hummingbot** | Pure Market Making | Uses bid/ask spread instead of BB/RSI |
-| **Freqtrade** | Custom strategies | Open-source Python, highly configurable |
-| **Mudrex** | Strategy canvas | Visual strategy builder with mean reversion templates |
-| **Cryptohopper** | Strategy Designer | Combines multiple indicator signals |
+| **Hummingbot** | Pure Market Making | Dùng spread bid/ask thay vì BB/RSI |
+| **Freqtrade** | Chiến lược tùy chỉnh | Python mã nguồn mở, có thể cấu hình cao |
+| **Mudrex** | Strategy canvas | Trình dựng chiến lược trực quan với template mean reversion |
+| **Cryptohopper** | Strategy Designer | Kết hợp nhiều tín hiệu chỉ báo |
 
-## When to Use
+## Khi Nào Nên Dùng
 
-Use MeanReversion when:
-- Market has been ranging for >5 days with no clear trend
-- Implied/realized volatility is moderate (not too low, not too high)
-- You're comfortable being contrarian (buying dips when sentiment is fearful)
-- You want a statistically-grounded approach rather than momentum-chasing
+Dùng MeanReversion khi:
+- Thị trường đã đi ngang >5 ngày không có xu hướng rõ ràng
+- Biến động ngụ ý/thực hiện ở mức vừa phải (không quá thấp, không quá cao)
+- Bạn thoải mái với việc trái chiều (mua dip khi tâm lý sợ hãi)
+- Bạn muốn cách tiếp cận có cơ sở thống kê thay vì chạy theo momentum
 
-Avoid it when:
-- A clear trend is forming (bull or bear)
-- Major macro events are expected (FOMC, CPI release, halving)
-- Volatility is extremely high (mean reversion fails in panic)
+Tránh nó khi:
+- Một xu hướng rõ ràng đang hình thành (bull hoặc bear)
+- Các sự kiện vĩ mô lớn được kỳ vọng (FOMC, CPI release, halving)
+- Biến động cực kỳ cao (mean reversion thất bại trong hoảng loạn)
 
-## Why It Won (And When It Won't)
+## Tại Sao Nó Thắng (Và Khi Nào Sẽ Không)
 
-The arena test happened during a **mildly bearish, range-bound week**. This is MeanReversion's optimal environment. In a strong trending market (bull run or crash), this strategy would likely underperform Grid+DCA or even Buy&Hold.
+Thử nghiệm đấu trường diễn ra trong **tuần hơi giảm, đi ngang**. Đây là môi trường tối ưu của MeanReversion. Trong thị trường có xu hướng mạnh (bull run hoặc crash), chiến lược này có thể sẽ thua kém Grid+DCA hoặc thậm chí Buy&Hold.
 
-The +0.46% ROI in a -2.72% market translates to **+3.18% alpha** -- the highest of any strategy. But one week is not a statistically significant sample. Over 2 months of daily arenas, the true picture will emerge.
+ROI +0.46% trong thị trường -2.72% tương đương với **alpha +3.18%** -- cao nhất trong tất cả chiến lược. Nhưng một tuần không phải là mẫu có ý nghĩa thống kê. Qua 2 tháng đấu trường hàng ngày, bức tranh thực sự sẽ xuất hiện.
 
-## Optimization Ideas
+## Ý Tưởng Tối Ưu Hóa
 
-1. **True ADX calculation**: Replace the price-range proxy with the actual ADX formula (Directional Movement Index by Welles Wilder)
-2. **Dynamic RSI thresholds**: Use RSI percentiles instead of fixed 30/70. In a bull market, "oversold" might be RSI 40.
-3. **Z-score entry**: Instead of BB + RSI, use a price z-score > 2 as the signal (pure statistical approach)
-4. **Partial exits**: Sell 50% at RSI 60, remaining 50% at RSI 70 -- capture the full reversion without giving back all gains
-5. **Time-based exit**: If a position hasn't hit TP in 48h, reduce by 25% -- don't hold losing positions indefinitely
+1. **Tính ADX thực**: Thay proxy biên độ giá bằng công thức ADX thực (Directional Movement Index của Welles Wilder)
+2. **Ngưỡng RSI động**: Dùng phần trăm RSI thay vì 30/70 cố định. Trong bull market, "quá bán" có thể là RSI 40.
+3. **Vào theo Z-score**: Thay vì BB + RSI, dùng z-score giá > 2 làm tín hiệu (cách tiếp cận thuần thống kê)
+4. **Thoát từng phần**: Bán 50% ở RSI 60, 50% còn lại ở RSI 70 -- bắt toàn bộ sự hồi về mà không trả lại tất cả lợi nhuận
+5. **Thoát theo thời gian**: Nếu vị thế không chạm TP trong 48h, giảm 25% -- đừng giữ vị thế thua lỗ vô thời hạn

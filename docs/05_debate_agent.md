@@ -1,209 +1,209 @@
-# Multi-Agent Debate Strategy
+# Chiến Lược Multi-Agent Debate
 
-## Origin
+## Nguồn Gốc
 
-The multi-agent debate framework originates from AI research, particularly **"Improving Factuality and Reasoning in Language Models through Multiagent Debate"** (Du et al., 2023, MIT). The paper showed that having multiple LLM agents argue from different perspectives produces better reasoning than a single agent.
+Framework multi-agent debate bắt nguồn từ nghiên cứu AI, đặc biệt là **"Improving Factuality and Reasoning in Language Models through Multiagent Debate"** (Du et al., 2023, MIT). Bài báo cho thấy việc có nhiều LLM agent tranh luận từ các góc nhìn khác nhau tạo ra suy luận tốt hơn một agent đơn.
 
-Applied to trading, this mirrors the structure of a professional **investment committee**: a bull analyst (long thesis), a bear analyst (short thesis), and a portfolio manager (final decision). Hedge funds like Bridgewater Associates famously use this "radical transparency" debate format for investment decisions.
+Áp dụng vào trading, điều này phản ánh cấu trúc của một **ủy ban đầu tư** chuyên nghiệp: một chuyên gia phân tích bull (luận điểm mua), một chuyên gia phân tích bear (luận điểm bán), và một portfolio manager (quyết định cuối cùng). Các hedge fund như Bridgewater Associates nổi tiếng dùng định dạng debate "minh bạch triệt để" này cho các quyết định đầu tư.
 
-No existing crypto bot platforms offer an LLM-powered debate system. This strategy is unique to our implementation.
+Không có nền tảng bot crypto hiện có nào cung cấp hệ thống debate được hỗ trợ bởi LLM. Chiến lược này là duy nhất với triển khai của chúng ta.
 
-## How It Works
+## Cách Hoạt Động
 
-### Architecture: Three Agents
+### Kiến Trúc: Ba Agent
 
 ```
-         Technical Indicators + News
+         Chỉ Báo Kỹ Thuật + Tin Tức
                     |
             +-------+-------+
             |               |
         BULL AGENT      BEAR AGENT
-        (find reasons    (find reasons
-         to BUY)          to SELL)
+        (tìm lý do      (tìm lý do
+         để MUA)         để BÁN)
             |               |
             +-------+-------+
                     |
              MODERATOR AGENT
-             (weigh arguments,
-              final decision)
+             (cân nhắc lập luận,
+              quyết định cuối cùng)
                     |
             BUY / SELL / HOLD
 ```
 
 ### Agent 1: Bull Agent
 
-**Bias**: Optimistic. Actively looks for reasons to buy.
+**Thiên kiến**: Lạc quan. Chủ động tìm lý do để mua.
 
-**Input**: Technical indicators (RSI, MACD, SMA, BB, volume, support/resistance) + news sentiment
+**Đầu vào**: Chỉ báo kỹ thuật (RSI, MACD, SMA, BB, volume, hỗ trợ/kháng cự) + tâm lý tin tức
 
-**LLM Prompt**: "You are the BULLISH analyst. Look for oversold conditions as buying opportunities, positive momentum forming, support levels holding, positive news as catalysts."
+**LLM Prompt**: "Bạn là chuyên gia phân tích BULLISH. Tìm điều kiện quá bán làm cơ hội mua, momentum tích cực đang hình thành, mức hỗ trợ đang giữ, tin tức tích cực làm xúc tác."
 
-**Output**: `Signal(direction, confidence, reasoning, score)` where score ranges from -100 to +100 (biased positive)
+**Đầu ra**: `Signal(direction, confidence, reasoning, score)` trong đó score nằm trong khoảng -100 đến +100 (thiên về tích cực)
 
-**Rule-based Fallback** (when LLM times out or refuses):
+**Fallback Theo Quy Tắc** (khi LLM timeout hoặc từ chối):
 ```
-RSI < 30:         +30 points ("oversold - strong buy zone")
-MACD histogram > 0: +20 points ("positive momentum")
-Price > SMA20 > SMA50: +25 points ("uptrend confirmed")
-Price at lower BB: +20 points ("bounce expected")
-Volume > 1.5x avg: +10 points ("strong interest")
-Near support:     +15 points ("support holding")
-Bullish news:     +20 points
+RSI < 30:         +30 điểm ("quá bán - vùng mua mạnh")
+MACD histogram > 0: +20 điểm ("momentum tích cực")
+Price > SMA20 > SMA50: +25 điểm ("xu hướng tăng xác nhận")
+Price tại lower BB: +20 điểm ("dự kiến bật")
+Volume > 1.5x avg: +10 điểm ("quan tâm mạnh")
+Gần hỗ trợ:       +15 điểm ("hỗ trợ giữ")
+Tin tức bull:     +20 điểm
 ```
 
 ### Agent 2: Bear Agent
 
-**Bias**: Pessimistic. Actively looks for reasons to sell or avoid buying.
+**Thiên kiến**: Bi quan. Chủ động tìm lý do để bán hoặc tránh mua.
 
-**LLM Prompt**: "You are the BEARISH analyst. Look for overbought conditions as sell signals, weakening momentum and divergences, resistance levels about to reject price, negative news as warning signs."
+**LLM Prompt**: "Bạn là chuyên gia phân tích BEARISH. Tìm điều kiện quá mua làm tín hiệu bán, momentum yếu đi và phân kỳ, mức kháng cự sắp từ chối giá, tin tức tiêu cực làm cảnh báo."
 
-**Rule-based Fallback**:
+**Fallback Theo Quy Tắc**:
 ```
-RSI > 70:         -30 points ("overbought")
-MACD histogram < 0: -20 points ("negative momentum")
-Price < SMA20 < SMA50: -25 points ("downtrend")
-Price at upper BB: -20 points ("rejection expected")
-Low volume:       -10 points ("weak rally")
-Near resistance:  -15 points ("about to reject")
-Bearish news:     -20 points
+RSI > 70:         -30 điểm ("quá mua")
+MACD histogram < 0: -20 điểm ("momentum tiêu cực")
+Price < SMA20 < SMA50: -25 điểm ("xu hướng giảm")
+Price tại upper BB: -20 điểm ("dự kiến bị từ chối")
+Volume thấp:      -10 điểm ("rally yếu")
+Gần kháng cự:     -15 điểm ("sắp bị từ chối")
+Tin tức bear:     -20 điểm
 ```
 
 ### Agent 3: Moderator
 
-**Role**: Weighs bull vs bear arguments, considers consensus/divergence, makes final call.
+**Vai trò**: Cân nhắc lập luận bull vs bear, xem xét đồng thuận/phân kỳ, đưa ra quyết định cuối cùng.
 
-**Decision Logic**:
-1. **Weighted average**: `combined_score = bull_score * 0.50 + bear_score * 0.50`
-2. **Consensus bonus**: If both agents agree on direction, add +/-15 points
-3. **Divergence handling**: If scores diverge by >60 points, follow the stronger signal with 15% weight bonus
-4. **Volatility damping**: If BB width > 5%, reduce score by 20% (be cautious in high volatility)
-5. **News amplifier**: If news score > 40, add 10% of news score to combined
+**Logic Quyết Định**:
+1. **Trung bình có trọng số**: `combined_score = bull_score * 0.50 + bear_score * 0.50`
+2. **Thưởng đồng thuận**: Nếu cả hai agent đồng ý về hướng, cộng +/-15 điểm
+3. **Xử lý phân kỳ**: Nếu điểm phân kỳ >60 điểm, theo tín hiệu mạnh hơn với thưởng trọng số 15%
+4. **Damping biến động**: Nếu BB width > 5%, giảm điểm 20% (cẩn trọng trong biến động cao)
+5. **Khuếch đại tin tức**: Nếu điểm tin tức > 40, cộng 10% điểm tin tức vào combined
 
-**Position Sizing**:
+**Định Cỡ Vị Thế**:
 ```
 BUY:  position_pct = min(40%, max(5%, combined_score / 2))
 SELL: position_pct = min(40%, max(5%, |combined_score| / 2))
-HOLD: no action
+HOLD: không hành động
 ```
 
-### Execution in Arena
+### Thực Thi Trong Đấu Trường
 
-The debate runs every **4 hours** (configurable). Between debates, the position is held unchanged. Each debate cycle:
+Debate chạy mỗi **4 giờ** (có thể cấu hình). Giữa các debate, vị thế được giữ nguyên. Mỗi chu kỳ debate:
 
-1. Fetch latest 50 candles for technical analysis
-2. Compute all indicators (RSI, MACD, SMA, BB, volume, support/resistance)
-3. Feed to Bull and Bear agents (LLM with rule-based fallback)
-4. Moderator synthesizes and decides
-5. Execute trade if direction is BUY or SELL with confidence > 5
+1. Lấy 50 nến mới nhất để phân tích kỹ thuật
+2. Tính tất cả chỉ báo (RSI, MACD, SMA, BB, volume, hỗ trợ/kháng cự)
+3. Đưa vào Bull và Bear agent (LLM với fallback theo quy tắc)
+4. Moderator tổng hợp và quyết định
+5. Thực thi giao dịch nếu hướng là BUY hoặc SELL với confidence > 5
 
-### News Integration
+### Tích Hợp Tin Tức
 
-Every 12 hours (every 4th debate), news sentiment is refreshed:
-- 7 RSS feeds crawled (CoinTelegraph, CoinDesk, Decrypt, TheBlock, etc.)
-- Headlines filtered by coin keyword
-- Bull/bear word scoring (-100 to +100)
-- Fed into both agents as additional context
+Mỗi 12 giờ (mỗi 4 debate), tâm lý tin tức được làm mới:
+- 7 RSS feed được crawl (CoinTelegraph, CoinDesk, Decrypt, TheBlock, v.v.)
+- Tiêu đề được lọc theo từ khóa coin
+- Chấm điểm từ bull/bear (-100 đến +100)
+- Đưa vào cả hai agent làm ngữ cảnh bổ sung
 
-## Parameters
+## Tham Số
 
-| Parameter | Value | Description |
+| Tham Số | Giá Trị | Mô Tả |
 |-----------|-------|-------------|
-| `debate_interval` | 4h | Hours between debate cycles |
-| `confidence_threshold` | 5 | Minimum confidence to act |
-| `max_buy_pct` | 40% | Maximum position size per buy |
-| `min_buy_pct` | 5% | Minimum position size per buy |
-| `news_refresh_interval` | 12h | Hours between news sentiment updates |
+| `debate_interval` | 4h | Giờ giữa các chu kỳ debate |
+| `confidence_threshold` | 5 | Confidence tối thiểu để hành động |
+| `max_buy_pct` | 40% | Kích thước vị thế tối đa mỗi lần mua |
+| `min_buy_pct` | 5% | Kích thước vị thế tối thiểu mỗi lần mua |
+| `news_refresh_interval` | 12h | Giờ giữa các lần cập nhật tâm lý tin tức |
 
-## Fee Model
+## Mô Hình Phí
 
-All orders are **market orders**: taker fee 0.10% + slippage 0.02% = 0.12% per trade. Trade frequency depends entirely on LLM decisions -- in the arena test, 12 trades over 7 days (roughly 1.7 per day).
+Tất cả lệnh đều là **lệnh market**: phí taker 0.10% + slippage 0.02% = 0.12% mỗi giao dịch. Tần suất giao dịch hoàn toàn phụ thuộc vào quyết định LLM -- trong thử nghiệm đấu trường, 12 giao dịch qua 7 ngày (khoảng 1.7 mỗi ngày).
 
-## Strengths
+## Điểm Mạnh
 
-1. **Adaptive to any market condition**: Unlike rule-based strategies that have fixed parameters, the LLM agents can reason about unprecedented situations. When news breaks about a regulatory change, the agents can factor in context that no fixed indicator would capture.
+1. **Thích ứng với mọi điều kiện thị trường**: Không như các chiến lược theo quy tắc có tham số cố định, các LLM agent có thể suy luận về các tình huống chưa từng có. Khi có tin tức về thay đổi quy định, các agent có thể tính đến ngữ cảnh mà không có chỉ báo cố định nào nắm bắt được.
 
-2. **Balanced perspective**: The bull-bear-moderator structure prevents single-perspective bias. A solo LLM might be consistently bullish or bearish; the debate format forces both sides to present their case.
+2. **Góc nhìn cân bằng**: Cấu trúc bull-bear-moderator ngăn thiên kiến góc nhìn đơn. Một LLM đơn có thể nhất quán bullish hoặc bearish; định dạng debate buộc cả hai bên trình bày trường hợp của mình.
 
-3. **Integrates multiple data sources**: Technical analysis + news sentiment + LLM reasoning. No other strategy in the arena combines quantitative indicators with qualitative news analysis.
+3. **Tích hợp nhiều nguồn dữ liệu**: Phân tích kỹ thuật + tâm lý tin tức + suy luận LLM. Không có chiến lược nào khác trong đấu trường kết hợp chỉ báo định lượng với phân tích tin tức định tính.
 
-4. **Self-documenting decisions**: Every trade comes with a full reasoning log (bull arguments, bear arguments, moderator decision). This is invaluable for post-hoc analysis and strategy improvement.
+4. **Quyết định tự ghi lại**: Mỗi giao dịch có một log lập luận đầy đủ (lập luận bull, lập luận bear, quyết định moderator). Điều này vô giá cho phân tích hậu kỳ và cải thiện chiến lược.
 
-5. **Rule-based fallback ensures reliability**: When the LLM times out (happened 3x in the arena test), the rule-based system takes over seamlessly. The bot never freezes waiting for an API call.
+5. **Fallback theo quy tắc đảm bảo độ tin cậy**: Khi LLM timeout (xảy ra 3 lần trong thử nghiệm đấu trường), hệ thống theo quy tắc tiếp quản liền mạch. Bot không bao giờ đóng băng chờ một API call.
 
-6. **Consensus mechanism reduces noise**: The moderator's consensus bonus (+15 for agreement) and divergence handling create a natural noise filter. Random LLM outputs that contradict each other lead to HOLD decisions, which is the correct default.
+6. **Cơ chế đồng thuận giảm nhiễu**: Thưởng đồng thuận của moderator (+15 cho đồng ý) và xử lý phân kỳ tạo ra bộ lọc nhiễu tự nhiên. Các đầu ra LLM ngẫu nhiên mâu thuẫn với nhau dẫn đến quyết định HOLD, đó là mặc định đúng.
 
-## Weaknesses
+## Điểm Yếu
 
-1. **Slowest strategy to execute**: Each debate cycle requires 3 LLM calls (bull, bear, moderator). With 30-45 second timeouts, a single debate cycle can take 2-3 minutes. In the arena, this made the backtest 10x slower than pure rule-based strategies.
+1. **Chiến lược thực thi chậm nhất**: Mỗi chu kỳ debate yêu cầu 3 cuộc gọi LLM (bull, bear, moderator). Với timeout 30-45 giây, một chu kỳ debate có thể mất 2-3 phút. Trong đấu trường, điều này làm backtest chậm hơn 10 lần so với các chiến lược thuần quy tắc.
 
-2. **LLM inconsistency**: The same technical data can produce different recommendations on different calls. LLMs are non-deterministic, so the strategy's decisions have a random component. In one test, the bull agent might say "buy" with 70% confidence; re-running with identical data might yield 45% confidence.
+2. **LLM không nhất quán**: Cùng dữ liệu kỹ thuật có thể tạo ra các khuyến nghị khác nhau ở các lệnh gọi khác nhau. LLM không xác định, nên các quyết định của chiến lược có thành phần ngẫu nhiên. Trong một thử nghiệm, bull agent có thể nói "mua" với 70% confidence; chạy lại với dữ liệu giống hệt có thể cho 45% confidence.
 
-3. **Worst ROI in the arena (-0.84%)**: Among the 5 active strategies, the debate bot performed the worst. The LLM decisions didn't consistently outperform simple rule-based strategies. The -0.84% ROI suggests the bot made several bad calls.
+3. **ROI tệ nhất trong đấu trường (-0.84%)**: Trong 5 chiến lược chủ động, debate bot hoạt động tệ nhất. Các quyết định LLM không nhất quán vượt trội hơn các chiến lược theo quy tắc đơn giản. ROI -0.84% cho thấy bot đã đưa ra một số quyết định tệ.
 
-4. **High latency = missed opportunities**: With 4-hour debate intervals, the bot can miss rapid market moves. A flash crash at hour 1 won't trigger a response until hour 4, by which time the opportunity may be gone.
+4. **Độ trễ cao = bỏ lỡ cơ hội**: Với khoảng debate 4 giờ, bot có thể bỏ lỡ các chuyển động thị trường nhanh. Một flash crash ở giờ 1 sẽ không kích hoạt phản ứng cho đến giờ 4, lúc đó cơ hội có thể đã qua.
 
-5. **Cost per decision**: Each debate uses 3 Claude Haiku calls at ~$0.05 budget each. Over 42 debates (7 days), that's ~$6.30 in LLM costs -- not counted in the trading fees but a real operational expense.
+5. **Chi phí mỗi quyết định**: Mỗi debate dùng 3 cuộc gọi Claude Haiku ở ~$0.05 mỗi ngân sách. Qua 42 debate (7 ngày), đó là ~$6.30 chi phí LLM -- không tính vào phí giao dịch nhưng là chi phí vận hành thực sự.
 
-6. **Prompt engineering sensitivity**: The quality of trading decisions is highly dependent on how the prompts are written. A poorly phrased prompt can lead the LLM to be too cautious (always HOLD) or too aggressive (always BUY). The current prompts work but aren't optimized.
+6. **Nhạy cảm với prompt engineering**: Chất lượng quyết định giao dịch phụ thuộc lớn vào cách prompt được viết. Một prompt diễn đạt kém có thể dẫn LLM quá thận trọng (luôn HOLD) hoặc quá tích cực (luôn BUY). Các prompt hiện tại hoạt động nhưng chưa được tối ưu.
 
-7. **News sentiment is crude**: The bull/bear keyword scoring is simplistic. "Bitcoin crashes to new low" and "Bitcoin crashes through resistance to new high" would both score as bearish due to the word "crashes."
+7. **Tâm lý tin tức thô**: Chấm điểm từ khóa bull/bear đơn giản. "Bitcoin crashes to new low" và "Bitcoin crashes through resistance to new high" đều sẽ chấm là bearish do từ "crashes".
 
-## Ideal Market Conditions
+## Điều Kiện Thị Trường Lý Tưởng
 
-- **Best**: News-driven markets where fundamental analysis matters (regulatory announcements, ETF approvals, major hacks). The LLM can interpret context that no technical indicator captures.
-- **Good**: Transition periods between bull and bear markets where human-like judgment helps
-- **Poor**: Calm, technical markets where simple indicators (RSI, BB) are sufficient
-- **Worst**: Flash crash scenarios (too slow to react) or strongly trending markets (LLM waffles between bull and bear)
+- **Tốt nhất**: Thị trường theo tin tức nơi phân tích cơ bản quan trọng (thông báo quy định, phê duyệt ETF, hack lớn). LLM có thể diễn giải ngữ cảnh mà không chỉ báo kỹ thuật nào nắm bắt được.
+- **Tốt**: Giai đoạn chuyển tiếp giữa thị trường bull và bear nơi phán đoán giống con người hữu ích
+- **Kém**: Thị trường yên ả, kỹ thuật nơi chỉ báo đơn giản (RSI, BB) là đủ
+- **Tệ nhất**: Tình huống flash crash (quá chậm để phản ứng) hoặc thị trường có xu hướng mạnh (LLM lưỡng lự giữa bull và bear)
 
-## Arena Results (7-day BTC/USDT backtest)
+## Kết Quả Đấu Trường (Backtest BTC/USDT 7 ngày)
 
 ```
 Market: $80,267 -> $78,088 (-2.72%)
 Debate:  ROI -0.84%  |  Alpha +1.87%  |  12 trades  |  Cost $3.54
 ```
 
-Placed 5th (last among active strategies). Let's analyze the timeline:
+Xếp thứ 5 (cuối trong số các chiến lược chủ động). Hãy phân tích timeline:
 
-- **28h**: 7 debates, 0 trades. All decisions were HOLD -- likely because confidence was below the threshold.
-- **56h**: 14 debates, trades started. ROI +0.34% -- the bot bought during the mini rally to $81,860.
-- **84h**: 21 debates, ROI dropped to -0.38%. The bot bought near the top and the market reversed.
-- **112h**: 28 debates, ROI -0.81%. Market at $79,361. LLM kept holding losing positions.
-- **140h**: 35 debates, ROI -0.18%. Some recovery as market bounced to $80,581.
-- **168h (final)**: 42 debates, ROI -0.84%. Final market drop to $78,088 hurt the positions.
+- **28h**: 7 debate, 0 giao dịch. Tất cả quyết định đều là HOLD -- có thể vì confidence dưới ngưỡng.
+- **56h**: 14 debate, giao dịch bắt đầu. ROI +0.34% -- bot mua trong mini rally lên $81,860.
+- **84h**: 21 debate, ROI giảm xuống -0.38%. Bot mua gần đỉnh và thị trường đảo chiều.
+- **112h**: 28 debate, ROI -0.81%. Thị trường ở $79,361. LLM tiếp tục giữ các vị thế thua.
+- **140h**: 35 debate, ROI -0.18%. Một số hồi phục khi thị trường bật lên $80,581.
+- **168h (cuối)**: 42 debate, ROI -0.84%. Cú giảm thị trường cuối xuống $78,088 làm tổn hại các vị thế.
 
-The pattern shows the LLM made a bad timing call: buying during a brief rally that turned out to be a dead cat bounce.
+Mẫu cho thấy LLM đã đưa ra quyết định thời điểm tệ: mua trong một rally ngắn hóa ra là dead cat bounce.
 
-## Bot Equivalents
+## Bot Tương Đương
 
-There are no direct equivalents in existing crypto bot platforms. The closest analogies:
+Không có tương đương trực tiếp trong các nền tảng bot crypto hiện có. Các tương tự gần nhất:
 
-| Platform | Feature | Difference |
+| Nền Tảng | Tính Năng | Khác Biệt |
 |----------|---------|------------|
-| **TradingView** | Community signals | Human analysts, not LLM agents |
-| **Dash2Trade** | AI-powered signals | Proprietary model, single perspective |
-| **Numerai** | Ensemble models | Crowd-sourced ML models, not debate format |
-| **CryptoGPT** | AI-assisted trading | Single LLM, no adversarial structure |
+| **TradingView** | Tín hiệu cộng đồng | Phân tích viên con người, không phải LLM agent |
+| **Dash2Trade** | Tín hiệu AI | Mô hình độc quyền, góc nhìn đơn |
+| **Numerai** | Mô hình ensemble | Mô hình ML cộng đồng, không phải định dạng debate |
+| **CryptoGPT** | Giao dịch hỗ trợ AI | LLM đơn, không có cấu trúc đối lập |
 
-## When to Use
+## Khi Nào Nên Dùng
 
-Use the Debate strategy when:
-- You want a "second opinion" alongside rule-based strategies
-- Major news events are expected and you want AI interpretation
-- You're running it as an ensemble member (not sole strategy)
-- You value explainability (every decision has documented reasoning)
+Dùng chiến lược Debate khi:
+- Bạn muốn "ý kiến thứ hai" cùng với các chiến lược theo quy tắc
+- Các sự kiện tin tức lớn được kỳ vọng và bạn muốn diễn giải AI
+- Bạn chạy nó như một thành viên ensemble (không phải chiến lược duy nhất)
+- Bạn đánh giá cao khả năng giải thích (mỗi quyết định có lập luận được ghi lại)
 
-Avoid it when:
-- You need fast execution (4-hour debate interval is too slow for scalping)
-- You want deterministic, reproducible results
-- Operating costs matter (LLM calls add up)
-- Market is purely technical (no news catalysts)
+Tránh nó khi:
+- Bạn cần thực thi nhanh (khoảng debate 4 giờ quá chậm cho scalping)
+- Bạn muốn kết quả xác định, có thể tái tạo
+- Chi phí vận hành quan trọng (cuộc gọi LLM cộng dồn)
+- Thị trường thuần kỹ thuật (không có xúc tác tin tức)
 
-## Optimization Ideas
+## Ý Tưởng Tối Ưu Hóa
 
-1. **Faster model**: Switch from Haiku to a faster/cheaper model for bull/bear, keep Haiku for moderator only
-2. **Shorter interval**: Run debates every 1 hour instead of 4 for faster response
-3. **Memory across debates**: Give the moderator access to previous debate results -- currently each debate is independent with no memory
-4. **Better news processing**: Use LLM to summarize news rather than keyword scoring
-5. **Confidence calibration**: Track accuracy of past predictions and weight future decisions by historical accuracy
-6. **Ensemble with rules**: Use LLM decisions as a modifier on rule-based signals, not as standalone decisions
-7. **Multi-model debate**: Use different LLM models for bull vs bear to increase perspective diversity
+1. **Mô hình nhanh hơn**: Chuyển từ Haiku sang mô hình nhanh hơn/rẻ hơn cho bull/bear, giữ Haiku chỉ cho moderator
+2. **Khoảng cách ngắn hơn**: Chạy debate mỗi 1 giờ thay vì 4 để phản ứng nhanh hơn
+3. **Bộ nhớ giữa các debate**: Cho moderator truy cập kết quả debate trước đó -- hiện tại mỗi debate độc lập không có bộ nhớ
+4. **Xử lý tin tức tốt hơn**: Dùng LLM để tóm tắt tin tức thay vì chấm điểm từ khóa
+5. **Hiệu chuẩn confidence**: Theo dõi độ chính xác của dự đoán trước và cân nhắc quyết định tương lai theo độ chính xác lịch sử
+6. **Ensemble với quy tắc**: Dùng quyết định LLM làm bộ điều chỉnh trên tín hiệu theo quy tắc, không phải làm quyết định độc lập
+7. **Multi-model debate**: Dùng các mô hình LLM khác nhau cho bull vs bear để tăng đa dạng góc nhìn

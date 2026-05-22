@@ -1,114 +1,114 @@
 # Buy & Hold (Benchmark)
 
-## Origin
+## Nguồn Gốc
 
-Buy & Hold is the oldest investment strategy, championed by **Warren Buffett**, **John Bogle** (Vanguard founder), and **Burton Malkiel** (*A Random Walk Down Wall Street*, 1973). The efficient market hypothesis (EMH) argues that since markets incorporate all available information, active trading cannot consistently beat a simple buy-and-hold approach after accounting for fees.
+Buy & Hold là chiến lược đầu tư cổ xưa nhất, được ủng hộ bởi **Warren Buffett**, **John Bogle** (người sáng lập Vanguard), và **Burton Malkiel** (*A Random Walk Down Wall Street*, 1973). Lý thuyết thị trường hiệu quả (EMH) lập luận rằng vì thị trường tổng hợp tất cả thông tin có sẵn, giao dịch chủ động không thể nhất quán vượt qua cách tiếp cận mua-và-giữ đơn giản sau khi tính phí.
 
-In the crypto arena, Buy & Hold serves as the **benchmark** -- any strategy that can't beat it is destroying value compared to simply buying and sitting.
+Trong đấu trường crypto, Buy & Hold đóng vai trò **benchmark** -- bất kỳ chiến lược nào không thể đánh bại nó đang phá hủy giá trị so với việc đơn giản mua và ngồi.
 
-## How It Works
+## Cách Hoạt Động
 
 ```
-Step 1: Buy $2,000 worth of BTC at the entry price
-Step 2: Hold for the entire duration
-Step 3: Calculate final portfolio value at exit price
+Bước 1: Mua $2,000 BTC ở giá vào
+Bước 2: Giữ trong toàn bộ thời gian
+Bước 3: Tính giá trị danh mục cuối ở giá thoát
 ```
 
-That's it. No indicators, no decisions, no trades, no fees.
+Thế thôi. Không có chỉ báo, không có quyết định, không có giao dịch, không có phí.
 
 ```python
-bh_qty = budget / entry_price    # e.g., 2000 / 80267 = 0.02492 BTC
-bh_pv = bh_qty * final_price     # e.g., 0.02492 * 78088 = $1,945.69
+bh_qty = budget / entry_price    # vd: 2000 / 80267 = 0.02492 BTC
+bh_pv = bh_qty * final_price     # vd: 0.02492 * 78088 = $1,945.69
 bh_roi = (bh_pv - budget) / budget * 100  # = -2.72%
 ```
 
-## Parameters
+## Tham Số
 
-None. This is the zero-parameter strategy.
+Không có. Đây là chiến lược không-tham-số.
 
-## Fee Model
+## Mô Hình Phí
 
-**Zero fees, zero slippage.** This is actually slightly unrealistic -- a real Buy & Hold would incur a one-time taker fee (0.10%) and slippage (0.02%) on the initial buy. For a $2,000 position, that's ~$2.40 in total cost. We ignore this because Buy & Hold is meant as an idealized benchmark.
+**Không phí, không slippage.** Điều này thực ra hơi không thực tế -- Buy & Hold thực sự sẽ chịu một lần phí taker (0.10%) và slippage (0.02%) trên lệnh mua ban đầu. Đối với vị thế $2,000, đó là ~$2.40 tổng chi phí. Chúng ta bỏ qua điều này vì Buy & Hold được dùng như benchmark lý tưởng hóa.
 
-## Strengths
+## Điểm Mạnh
 
-1. **Captures 100% of any uptrend**: If BTC goes up 50% in a month, Buy & Hold captures the full 50%. No strategy that takes partial positions or exits early can match this in a strong bull run.
+1. **Bắt 100% bất kỳ xu hướng tăng nào**: Nếu BTC tăng 50% trong một tháng, Buy & Hold bắt được toàn bộ 50%. Không có chiến lược nào lấy vị thế từng phần hoặc thoát sớm có thể sánh được trong bull run mạnh.
 
-2. **Zero fees**: No trading means no friction. Over long periods, this compounds significantly. A strategy that trades 10x per day at 0.12% per trade pays ~1.2% daily in fees -- over a month, that's 36% lost to trading costs. Buy & Hold pays nothing.
+2. **Không phí**: Không giao dịch nghĩa là không ma sát. Qua thời gian dài, điều này tích lũy đáng kể. Một chiến lược giao dịch 10 lần/ngày ở 0.12% mỗi giao dịch trả ~1.2% phí hàng ngày -- qua một tháng, đó là 36% mất vào chi phí giao dịch. Buy & Hold không trả gì.
 
-3. **Zero emotional decisions**: No sell too early, no buy too late, no panic exits. The strategy is immune to behavioral finance biases.
+3. **Không có quyết định cảm tính**: Không bán quá sớm, không mua quá muộn, không thoát hoảng loạn. Chiến lược miễn nhiễm với thiên kiến tài chính hành vi.
 
-4. **Historically superior**: Over Bitcoin's 15-year history, Buy & Hold has been the best strategy for any holding period > 4 years. From 2009 to 2025, BTC went from $0 to $80,000+. Any active trading during that period almost certainly underperformed holding.
+4. **Vượt trội về mặt lịch sử**: Qua 15 năm lịch sử của Bitcoin, Buy & Hold là chiến lược tốt nhất cho bất kỳ thời gian giữ nào > 4 năm. Từ 2009 đến 2025, BTC đi từ $0 đến $80,000+. Bất kỳ giao dịch chủ động nào trong giai đoạn đó gần như chắc chắn thua kém giữ.
 
-5. **Zero operational complexity**: No servers to run, no API keys, no LLM costs, no monitoring needed. The ultimate "set and forget" approach.
+5. **Không phức tạp vận hành**: Không có server để chạy, không có API key, không có chi phí LLM, không cần giám sát. Cách tiếp cận "set and forget" tối thượng.
 
-6. **Benchmark for alpha**: Alpha is defined as `strategy_ROI - buyhold_ROI`. Any positive alpha means the strategy added value beyond simple holding.
+6. **Benchmark cho alpha**: Alpha được định nghĩa là `strategy_ROI - buyhold_ROI`. Bất kỳ alpha dương nào nghĩa là chiến lược đã thêm giá trị vượt qua việc giữ đơn giản.
 
-## Weaknesses
+## Điểm Yếu
 
-1. **100% exposure to drawdowns**: If BTC drops 70% (as it did in 2022), Buy & Hold drops 70%. There's no risk management, no stop loss, no rebalancing. In our arena test, the -2.72% market drop became a -2.72% portfolio loss -- the worst of all strategies.
+1. **100% rủi ro trước drawdown**: Nếu BTC giảm 70% (như đã từng năm 2022), Buy & Hold giảm 70%. Không có quản lý rủi ro, không có stop loss, không có cân bằng lại. Trong thử nghiệm đấu trường của chúng ta, cú giảm thị trường -2.72% trở thành lỗ danh mục -2.72% -- tệ nhất trong tất cả các chiến lược.
 
-2. **No profit taking**: Even if the portfolio is up 100%, Buy & Hold never sells. It can ride a massive gain all the way back down to breakeven or below.
+2. **Không chốt lời**: Ngay cả khi danh mục tăng 100%, Buy & Hold không bao giờ bán. Nó có thể đi cùng cú tăng khổng lồ suốt đường về breakeven hoặc thấp hơn.
 
-3. **Opportunity cost during ranging markets**: In a sideways market, the capital is locked up doing nothing. Strategies like Grid+DCA and MeanReversion actively profit from price oscillations during these periods.
+3. **Chi phí cơ hội trong thị trường đi ngang**: Trong thị trường sideways, vốn bị khóa không làm gì. Các chiến lược như Grid+DCA và MeanReversion chủ động sinh lời từ dao động giá trong các giai đoạn này.
 
-4. **Requires infinite time horizon**: Buy & Hold only reliably works if you can hold "forever." On any finite timeframe, you might buy at a peak and exit at a trough. The 7-day arena window was exactly this scenario.
+4. **Yêu cầu chân trời thời gian vô hạn**: Buy & Hold chỉ hoạt động đáng tin cậy nếu bạn có thể giữ "mãi mãi". Trong bất kỳ khung thời gian hữu hạn nào, bạn có thể mua ở đỉnh và thoát ở đáy. Cửa sổ đấu trường 7 ngày chính xác là tình huống này.
 
-5. **No adaptability**: If fundamental conditions change (an exchange hack, a regulatory ban), Buy & Hold doesn't react. It's the exact opposite of adaptive strategies like the Debate bot.
+5. **Không thích ứng**: Nếu điều kiện cơ bản thay đổi (sàn bị hack, lệnh cấm quy định), Buy & Hold không phản ứng. Nó là đối lập chính xác của các chiến lược thích ứng như bot Debate.
 
-## Ideal Market Conditions
+## Điều Kiện Thị Trường Lý Tưởng
 
-- **Best**: Strong, sustained bull market (parabolic rally)
-- **Good**: Mild uptrend over long periods (years)
-- **Poor**: Sideways/ranging market (dead capital, active strategies do better)
-- **Worst**: Bear market / crash (full exposure to all losses)
+- **Tốt nhất**: Thị trường bull mạnh, bền vững (tăng giá parabol)
+- **Tốt**: Xu hướng tăng nhẹ qua thời gian dài (nhiều năm)
+- **Kém**: Thị trường đi ngang/biên độ (vốn chết, chiến lược chủ động làm tốt hơn)
+- **Tệ nhất**: Thị trường gấu / crash (rủi ro hoàn toàn trước tất cả tổn thất)
 
-## Arena Results (7-day BTC/USDT backtest)
+## Kết Quả Đấu Trường (Backtest BTC/USDT 7 ngày)
 
 ```
 Market: $80,267 -> $78,088 (-2.72%)
 Buy&Hold:  ROI -2.72%  |  Alpha +0.00%  |  0 trades  |  Cost $0
 ```
 
-**Dead last.** Every active strategy beat Buy & Hold during this period. The +2-3% alpha from active strategies represents the value of tactical trading during a down market.
+**Bét bảng.** Mọi chiến lược chủ động đều đánh bại Buy & Hold trong giai đoạn này. Alpha +2-3% từ các chiến lược chủ động đại diện cho giá trị của giao dịch chiến thuật trong thị trường giảm.
 
-### Why Buy & Hold Lost
+### Tại Sao Buy & Hold Thua
 
-The arena period was a **mildly bearish week**. BTC dropped 2.72% with a range of about $79K-$82K. Active strategies profited from:
-- MeanReversion: bought oversold bounces within the range
-- Grid+DCA: captured small profits from grid oscillations
-- TrailingDCA: preserved capital by keeping 90% in USDT
+Giai đoạn đấu trường là **một tuần hơi giảm**. BTC giảm 2.72% với biên độ khoảng $79K-$82K. Các chiến lược chủ động sinh lời từ:
+- MeanReversion: mua các cú bật quá bán trong biên độ
+- Grid+DCA: bắt các lợi nhuận nhỏ từ dao động grid
+- TrailingDCA: bảo vệ vốn bằng cách giữ 90% trong USDT
 
-Buy & Hold was fully invested from hour 0 and absorbed the entire decline.
+Buy & Hold đầu tư toàn bộ từ giờ 0 và hấp thụ toàn bộ cú giảm.
 
-### When Buy & Hold Would Have Won
+### Khi Nào Buy & Hold Sẽ Thắng
 
-If BTC had rallied 10% during the week (e.g., $80K -> $88K):
+Nếu BTC tăng 10% trong tuần (vd: $80K -> $88K):
 - Buy & Hold: +10.00%
-- MeanRevert: ~+2% (ADX filter would have blocked most trades in trending market)
-- Grid+DCA: ~+5% (grid sells early, misses upper portion)
-- TrailingDCA: ~+3% (small base order, safety orders never trigger in uptrend)
+- MeanRevert: ~+2% (bộ lọc ADX sẽ chặn hầu hết giao dịch trong thị trường có xu hướng)
+- Grid+DCA: ~+5% (grid bán sớm, bỏ lỡ phần trên)
+- TrailingDCA: ~+3% (lệnh cơ sở nhỏ, safety orders không bao giờ kích hoạt trong xu hướng tăng)
 
-In bull markets, Buy & Hold is very hard to beat.
+Trong thị trường bull, Buy & Hold rất khó đánh bại.
 
-## The Real Question
+## Câu Hỏi Thực Sự
 
-Buy & Hold answers the question: **"Should I be trading at all?"**
+Buy & Hold trả lời câu hỏi: **"Tôi có nên giao dịch chút nào không?"**
 
-If no strategy consistently beats Buy & Hold after fees over a 2-month period, the answer is no -- you should just buy and hold BTC.
+Nếu không có chiến lược nào nhất quán đánh bại Buy & Hold sau phí trong giai đoạn 2 tháng, câu trả lời là không -- bạn nên chỉ mua và giữ BTC.
 
-This is why we run it as the benchmark. After 60 days of daily arena sessions, the leaderboard will show definitively whether active trading adds value in the current market regime.
+Đây là lý do chúng ta chạy nó làm benchmark. Sau 60 ngày các phiên đấu trường hàng ngày, bảng xếp hạng sẽ cho thấy dứt khoát liệu giao dịch chủ động có thêm giá trị trong chế độ thị trường hiện tại.
 
-## Historical Context: Bitcoin Buy & Hold
+## Bối Cảnh Lịch Sử: Bitcoin Buy & Hold
 
-| Period | BTC Price Change | Would Active Strategies Win? |
+| Giai Đoạn | Biến Động Giá BTC | Chiến Lược Chủ Động Có Thắng Không? |
 |--------|-----------------|------------------------------|
-| 2017 (bull) | +1,300% | No -- no strategy beats this |
-| 2018 (bear) | -73% | Yes -- any risk management helps |
-| 2019-2020 | +95% | Borderline -- depends on timing |
-| 2021 (bull) | +60% | No -- momentum too strong |
-| 2022 (bear) | -65% | Yes -- sell signals save capital |
-| 2023-2024 | +150% | No -- buy and hold wins again |
-| 2025 (current) | Ranging | Yes -- active strategies capture range |
+| 2017 (bull) | +1,300% | Không -- không chiến lược nào đánh bại được điều này |
+| 2018 (bear) | -73% | Có -- bất kỳ quản lý rủi ro nào cũng giúp |
+| 2019-2020 | +95% | Ranh giới -- phụ thuộc thời điểm |
+| 2021 (bull) | +60% | Không -- momentum quá mạnh |
+| 2022 (bear) | -65% | Có -- tín hiệu bán cứu vốn |
+| 2023-2024 | +150% | Không -- buy and hold lại thắng |
+| 2025 (hiện tại) | Đi ngang | Có -- chiến lược chủ động bắt được biên độ |
 
-The pattern: Buy & Hold wins in bull markets, active strategies win in bear/ranging markets. The challenge is knowing which regime you're in.
+Mẫu: Buy & Hold thắng trong thị trường bull, chiến lược chủ động thắng trong thị trường bear/đi ngang. Thách thức là biết bạn đang ở chế độ nào.
