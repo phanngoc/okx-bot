@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OKX MA_Grid Bot Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    :root {
+      --bg:        #0d1117;
+      --bg-card:   #161b22;
+      --bg-hover:  #1f2937;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --text-dim:  #8b949e;
+      --green:     #3fb950;
+      --red:       #f85149;
+      --yellow:    #d29922;
+      --blue:      #58a6ff;
+      --purple:    #bc8cff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Mono", Menlo, monospace;
+      font-size: 14px; line-height: 1.5; padding: 16px;
+    }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    h2 { font-size: 14px; color: var(--text-dim); font-weight: 500; margin-bottom: 12px; }
+    .subtitle { color: var(--text-dim); margin-bottom: 16px; font-size: 12px; }
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+    @media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px;
+    }
+    .metric { display: flex; flex-direction: column; gap: 4px; }
+    .metric-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .metric-sub { font-size: 11px; color: var(--text-dim); }
+    .green { color: var(--green); }
+    .red   { color: var(--red); }
+    .yellow{ color: var(--yellow); }
+    .blue  { color: var(--blue); }
+    .purple{ color: var(--purple); }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+    tr:hover td { background: var(--bg-hover); }
+    .chip {
+      display: inline-block; padding: 3px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 500; text-transform: uppercase;
+    }
+    .chip-buy   { background: rgba(63,185,80,0.15);  color: var(--green); }
+    .chip-sell  { background: rgba(248,81,73,0.15);  color: var(--red); }
+    .chip-bull  { background: rgba(63,185,80,0.15);  color: var(--green); }
+    .chip-bear  { background: rgba(248,81,73,0.15);  color: var(--red); }
+    .chip-neutral{background: rgba(139,148,158,0.15); color: var(--text-dim); }
+    .chip-grid  { background: rgba(88,166,255,0.15); color: var(--blue); }
+    .chip-dca   { background: rgba(188,140,255,0.15);color: var(--purple); }
+    .chart-wrap { position: relative; height: 320px; }
+    .chart-wrap-small { position: relative; height: 220px; }
+    .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 24px; }
+    .status-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 6px; vertical-align: middle;
+    }
+    .status-running { background: var(--green); animation: pulse 2s infinite; }
+    .status-stopped { background: var(--red); }
+    .status-unknown { background: var(--text-dim); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .last-update { font-size: 11px; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>OKX MA_Grid+DCA Bot Dashboard</h1>
+      <div class="subtitle">
+        <span id="status-dot" class="status-dot status-unknown"></span>
+        <span id="status-text">loading…</span> ·
+        <span id="symbol">—</span> ·
+        Allocation <span id="allocation">—</span>
+      </div>
+    </div>
+    <div class="last-update">
+      Last update: <span id="last-update">—</span>
+      <button onclick="loadAll()" style="margin-left: 8px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-family: inherit;">↻</button>
+    </div>
+  </div>
+
+  <!-- Top metrics -->
+  <div class="grid grid-4" style="margin-bottom: 16px;">
+    <div class="card metric">
+      <div class="metric-label">Equity</div>
+      <div class="metric-value" id="m-equity">—</div>
+      <div class="metric-sub" id="m-equity-sub">—</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Total PnL</div>
+      <div class="metric-value" id="m-pnl">—</div>
+      <div class="metric-sub" id="m-pnl-sub">—</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Drawdown</div>
+      <div class="metric-value" id="m-dd">—</div>
+      <div class="metric-sub" id="m-dd-sub">—</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Mark Price</div>
+      <div class="metric-value" id="m-mark">—</div>
+      <div class="metric-sub" id="m-mark-sub">—</div>
+    </div>
+  </div>
+
+  <!-- Secondary metrics -->
+  <div class="grid grid-4" style="margin-bottom: 16px;">
+    <div class="card metric">
+      <div class="metric-label">Trend</div>
+      <div class="metric-value"><span id="m-trend" class="chip chip-neutral">—</span></div>
+      <div class="metric-sub" id="m-trend-sub">MA5/MA60 spread —</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Fills</div>
+      <div class="metric-value" id="m-fills">—</div>
+      <div class="metric-sub" id="m-fills-sub">grid · dca</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Open Orders</div>
+      <div class="metric-value" id="m-open">—</div>
+      <div class="metric-sub" id="m-open-sub">— closed</div>
+    </div>
+    <div class="card metric">
+      <div class="metric-label">Coin Held</div>
+      <div class="metric-value" id="m-coin">—</div>
+      <div class="metric-sub" id="m-coin-sub">≈ $—</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-2" style="margin-bottom: 16px;">
+    <div class="card">
+      <h2>Equity over time</h2>
+      <div class="chart-wrap"><canvas id="chart-equity"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Mark price + fills</h2>
+      <div class="chart-wrap"><canvas id="chart-price"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Recent fills -->
+  <div class="card" style="margin-bottom: 16px;">
+    <h2>Recent fills</h2>
+    <table id="tbl-fills">
+      <thead><tr>
+        <th>Time</th><th>Side</th><th>Kind</th><th>Price</th><th>Amount</th><th>USDT Value</th><th>Fee</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Open orders + Trend log -->
+  <div class="grid grid-2">
+    <div class="card">
+      <h2>Open orders</h2>
+      <table id="tbl-orders">
+        <thead><tr>
+          <th>Side</th><th>Kind</th><th>Price</th><th>Amount</th><th>Created</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>MA trend log</h2>
+      <table id="tbl-trend">
+        <thead><tr>
+          <th>Time</th><th>Trend</th><th>Spread</th><th>Price</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+const fmtUSD = n => n != null ? '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—';
+const fmtPct = n => n != null ? (n >= 0 ? '+' : '') + n.toFixed(3) + '%' : '—';
+const fmtTime = s => s ? s.substr(11, 8) : '—';
+const fmtDateTime = s => s ? s.substr(0, 19).replace('T', ' ') : '—';
+const colorPnL = n => n > 0 ? 'green' : n < 0 ? 'red' : '';
+
+let chartEquity, chartPrice;
+
+async function loadStatus() {
+  const r = await fetch('/api/status').then(r => r.json());
+
+  // Header
+  document.getElementById('symbol').textContent = r.symbol || '—';
+  document.getElementById('allocation').textContent = fmtUSD(r.allocation);
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = 'status-dot status-' + (r.status === 'running' ? 'running' : r.status === 'stopped' ? 'stopped' : 'unknown');
+  txt.textContent = r.status || 'unknown';
+
+  // Metrics
+  document.getElementById('m-equity').textContent = fmtUSD(r.equity);
+  document.getElementById('m-equity-sub').textContent = `cash ${fmtUSD(r.cash)} · coin ${fmtUSD(r.coin_value)}`;
+
+  const pnl = document.getElementById('m-pnl');
+  pnl.textContent = fmtPct(r.total_pnl_pct);
+  pnl.className = 'metric-value ' + colorPnL(r.total_pnl_pct);
+  document.getElementById('m-pnl-sub').textContent = `from ${fmtUSD(r.allocation)} start`;
+
+  const dd = document.getElementById('m-dd');
+  dd.textContent = fmtPct(-r.drawdown_pct);
+  dd.className = 'metric-value ' + (r.drawdown_pct > 5 ? 'red' : r.drawdown_pct > 1 ? 'yellow' : '');
+  document.getElementById('m-dd-sub').textContent = `peak ${fmtUSD(r.peak_equity)}`;
+
+  document.getElementById('m-mark').textContent = fmtUSD(r.mark_price);
+  document.getElementById('m-mark-sub').textContent = r.symbol || '';
+
+  const tr = document.getElementById('m-trend');
+  tr.textContent = r.trend || 'neutral';
+  tr.className = 'chip chip-' + (r.trend || 'neutral');
+  document.getElementById('m-trend-sub').textContent = `spread ${fmtPct(r.trend_spread)}`;
+
+  document.getElementById('m-fills').textContent = r.n_fills || 0;
+  document.getElementById('m-fills-sub').textContent = `${r.n_grid_fills} grid · ${r.n_dca_fills} dca`;
+
+  document.getElementById('m-open').textContent = r.n_open_orders || 0;
+  document.getElementById('m-open-sub').textContent = `${r.n_closed_orders} closed`;
+
+  document.getElementById('m-coin').textContent = (r.coin || 0).toFixed(6);
+  document.getElementById('m-coin-sub').textContent = `≈ ${fmtUSD(r.coin_value)}`;
+
+  document.getElementById('last-update').textContent = fmtDateTime(r.last_tick);
+}
+
+async function loadEquityChart() {
+  const data = await fetch('/api/equity?limit=500').then(r => r.json());
+  const labels = data.map(d => new Date(d.ts));
+  const equity = data.map(d => d.equity);
+  const ds = [{
+    label: 'Equity ($)',
+    data: equity,
+    borderColor: '#58a6ff',
+    backgroundColor: 'rgba(88,166,255,0.1)',
+    fill: true, tension: 0.2, pointRadius: 0, borderWidth: 2,
+  }];
+  if (chartEquity) chartEquity.destroy();
+  chartEquity = new Chart(document.getElementById('chart-equity'), {
+    type: 'line',
+    data: { labels, datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { type: 'time', time: { unit: 'minute' }, ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+      },
+      plugins: { legend: { labels: { color: '#e6edf3' } } },
+    },
+  });
+}
+
+async function loadPriceChart() {
+  const [equity, fills] = await Promise.all([
+    fetch('/api/equity?limit=500').then(r => r.json()),
+    fetch('/api/fills?limit=200').then(r => r.json()),
+  ]);
+  const labels = equity.map(d => new Date(d.ts));
+  const price = equity.map(d => d.mark_price);
+
+  const buyFills  = fills.filter(f => f.side === 'buy'  && f.price > 0).map(f => ({ x: new Date(f.ts), y: f.price }));
+  const sellFills = fills.filter(f => f.side === 'sell' && f.price > 0).map(f => ({ x: new Date(f.ts), y: f.price }));
+
+  const ds = [
+    { label: 'Mark price', data: price.map((p, i) => ({ x: labels[i], y: p })),
+      borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)',
+      fill: false, tension: 0.2, pointRadius: 0, borderWidth: 2 },
+    { label: 'Buy fills', data: buyFills,
+      borderColor: 'transparent', backgroundColor: '#3fb950',
+      pointRadius: 5, pointHoverRadius: 7, showLine: false, type: 'scatter' },
+    { label: 'Sell fills', data: sellFills,
+      borderColor: 'transparent', backgroundColor: '#f85149',
+      pointRadius: 5, pointHoverRadius: 7, showLine: false, type: 'scatter' },
+  ];
+  if (chartPrice) chartPrice.destroy();
+  chartPrice = new Chart(document.getElementById('chart-price'), {
+    type: 'line',
+    data: { datasets: ds },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { type: 'time', time: { unit: 'minute' }, ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+      },
+      plugins: { legend: { labels: { color: '#e6edf3' } } },
+    },
+  });
+}
+
+async function loadFills() {
+  const rows = await fetch('/api/fills?limit=20').then(r => r.json());
+  const tbody = document.querySelector('#tbl-fills tbody');
+  tbody.innerHTML = rows.length === 0
+    ? '<tr><td colspan="7" style="color:var(--text-dim); text-align:center; padding:24px;">No fills yet</td></tr>'
+    : rows.map(r => `
+        <tr>
+          <td>${fmtTime(r.ts)}</td>
+          <td><span class="chip chip-${r.side}">${r.side}</span></td>
+          <td><span class="chip chip-${r.kind}">${r.kind}</span></td>
+          <td>${r.price ? fmtUSD(r.price) : 'market'}</td>
+          <td>${(r.amount || 0).toFixed(6)}</td>
+          <td>${r.price && r.amount ? fmtUSD(r.price * r.amount) : '—'}</td>
+          <td>${r.fee ? r.fee.toFixed(6) + ' ' + (r.fee_ccy || '') : '0'}</td>
+        </tr>`).join('');
+}
+
+async function loadOrders() {
+  const rows = await fetch('/api/orders').then(r => r.json());
+  const tbody = document.querySelector('#tbl-orders tbody');
+  tbody.innerHTML = rows.length === 0
+    ? '<tr><td colspan="5" style="color:var(--text-dim); text-align:center; padding:24px;">No open orders</td></tr>'
+    : rows.slice(0, 20).map(r => `
+        <tr>
+          <td><span class="chip chip-${r.side}">${r.side}</span></td>
+          <td><span class="chip chip-${r.kind || 'grid'}">${r.kind || 'grid'}</span></td>
+          <td>${fmtUSD(r.price)}</td>
+          <td>${(r.amount || 0).toFixed(6)}</td>
+          <td>${fmtDateTime(r.created_at)}</td>
+        </tr>`).join('');
+  if (rows.length > 20) {
+    tbody.innerHTML += `<tr><td colspan="5" style="color:var(--text-dim); text-align:center;">… and ${rows.length - 20} more</td></tr>`;
+  }
+}
+
+async function loadTrend() {
+  const rows = (await fetch('/api/trend?limit=50').then(r => r.json())).reverse();
+  const tbody = document.querySelector('#tbl-trend tbody');
+  tbody.innerHTML = rows.length === 0
+    ? '<tr><td colspan="4" style="color:var(--text-dim); text-align:center; padding:24px;">No trend data</td></tr>'
+    : rows.slice(0, 20).map(r => `
+        <tr>
+          <td>${fmtTime(r.ts)}</td>
+          <td><span class="chip chip-${r.trend}">${r.trend}</span></td>
+          <td class="${r.spread_pct > 0 ? 'green' : 'red'}">${fmtPct(r.spread_pct)}</td>
+          <td>${fmtUSD(r.price)}</td>
+        </tr>`).join('');
+}
+
+async function loadAll() {
+  try {
+    await Promise.all([loadStatus(), loadEquityChart(), loadPriceChart(), loadFills(), loadOrders(), loadTrend()]);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+loadAll();
+setInterval(loadAll, 30000);  // refresh every 30s
+</script>
+</body>
+</html>

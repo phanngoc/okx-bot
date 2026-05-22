@@ -41,5 +41,23 @@ module.exports = {
     env: {
       PYTHONUNBUFFERED: '1',       // immediate stdout flush
     },
+  },
+  {
+    name:        'okx-dashboard',
+    script:      'dashboard.py',
+    interpreter: '/Users/ngocp/.pyenv/versions/3.12.4/bin/python',
+    cwd:         '/Users/ngocp/goterm-workspace/okx-bot',
+    autorestart: true,
+    max_restarts: 10,
+    min_uptime:  '30s',
+    restart_delay: 3000,
+    error_file:  'data/pm2-dash-error.log',
+    out_file:    'data/pm2-dash-out.log',
+    merge_logs:  true,
+    time:        true,
+    env: {
+      PYTHONUNBUFFERED: '1',
+      DASHBOARD_PORT:   '5050',
+    },
   }],
 };

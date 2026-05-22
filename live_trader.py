@@ -235,6 +235,13 @@ def main():
 
         time.sleep(interval)
 
+    # Graceful exit: cancel open orders so next start has USDT available
+    # (does NOT market-sell positions — those persist)
+    log.info("[MAIN] graceful exit — cancelling open orders to free USDT for restart")
+    try:
+        bot.kill_switch(market_sell_base=False)
+    except Exception as e:
+        log.error(f"[MAIN] cancel on exit failed: {e}")
     log.info("=== LIVE TRADER STOPPED ===")
 
 

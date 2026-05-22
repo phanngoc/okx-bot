@@ -151,10 +151,19 @@ class LiveMAGrid:
 
     def setup_initial_grid(self) -> None:
         """Place N buy limit orders below current price.
-        Total notional ≈ allocation. Each order ≈ allocation/N."""
+        Total notional ≈ allocation. Each order ≈ allocation/N.
+        Inserts live_session row FIRST so dashboard session-filter sees this run."""
         ticker = self.executor.fetch_ticker(self.symbol)
         mark = ticker["last"]
         self.entry_price = mark
+
+        # Record session BEFORE placing orders so order.created_at >= session.started_at
+        # (dashboard filters by `WHERE created_at >= session.started_at`)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO live_session (started_at, symbol, allocation, entry_price, status)
+                VALUES (?, ?, ?, ?, 'running')
+            """, (datetime.now(timezone.utc).isoformat(), self.symbol, self.alloc, self.entry_price))
 
         # Asymmetric grid based on current trend (neutral at start)
         upper_pct, lower_pct = self._grid_bounds(self.current_trend)
@@ -189,12 +198,6 @@ class LiveMAGrid:
         for r in results:
             self._save_order(r, kind="grid_init")
             self.last_known_order_ids.add(r["id"])
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT INTO live_session (started_at, symbol, allocation, entry_price, status)
-                VALUES (?, ?, ?, ?, 'running')
-            """, (datetime.now(timezone.utc).isoformat(), self.symbol, self.alloc, self.entry_price))
 
         log.info(f"[GRID] initial setup complete — entry ${self.entry_price:,.2f}")
 
