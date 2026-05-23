@@ -25,24 +25,34 @@ Phần "MA brain" lấy cảm hứng từ **adaptive grid bots** của Bybit/HTX
 ## Kiến Trúc 3 Thành Phần
 
 ```
-              ┌─────────────────────────────────┐
-              │  🧠 MA BRAIN (rebalance / 6h)   │
-              │  - Compute MA5, MA60            │
-              │  - Detect bull/bear/neutral     │
-              │  - Adjust grid range + DCA size │
-              └────────┬────────────────┬───────┘
-                       │                │
-              ┌────────▼─────┐  ┌──────▼────────┐
-              │  🟦 GRID     │  │  🟪 DCA       │
-              │  (passive)   │  │  (scheduled)  │
-              │              │  │               │
-              │  20 limit    │  │  market buy   │
-              │  orders sit  │  │  every 4h     │
-              │  on book.    │  │               │
-              │              │  │  Size scaled  │
-              │  Fill on     │  │  by trend     │
-              │  oscillation │  │               │
-              └──────────────┘  └───────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    MA_Grid+DCA Strategy                          │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  🧠 MA BRAIN  (rebalance every 6h)                         │ │
+│  │                                                            │ │
+│  │   • Fetch 60 candles 1h gần nhất                           │ │
+│  │   • Compute MA5, MA60, spread                              │ │
+│  │   • Classify: BULL / BEAR / NEUTRAL                        │ │
+│  │   • If trend changed: tell Grid + DCA to adapt             │ │
+│  └─────────────┬─────────────────────────┬────────────────────┘ │
+│                │                         │                       │
+│                ▼                         ▼                       │
+│  ┌─────────────────────────┐  ┌─────────────────────────────┐  │
+│  │  🟦 GRID  (passive)     │  │  🟪 DCA  (scheduled)        │  │
+│  │                         │  │                             │  │
+│  │  • 20 limit orders sit  │  │  • Every 4h: market buy $X  │  │
+│  │    on book, fill when   │  │    (X scaled by MA trend)   │  │
+│  │    market reaches level │  │                             │  │
+│  │  • On BUY fill →        │  │  • Smooth volatility,       │  │
+│  │    place SELL +0.5%     │  │    accumulate position      │  │
+│  │  • On SELL fill →       │  │                             │  │
+│  │    place BUY -0.5%      │  │  Defensive: bear ×0.5       │  │
+│  │                         │  │  Aggressive: bull ×1.3      │  │
+│  │  Profit: spread per     │  │                             │  │
+│  │  round-trip (~0.5%)     │  │                             │  │
+│  └─────────────────────────┘  └─────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component 1 — Grid (passive limit orders)
