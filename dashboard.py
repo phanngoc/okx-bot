@@ -133,12 +133,36 @@ def _session_start(buffer_sec: int = 60) -> str:
 
 @app.route("/api/equity")
 def api_equity():
-    """Equity timeline within current session."""
+    """Equity timeline within current session.
+
+    Downsamples uniformly across the full session if total samples > limit,
+    so the chart always shows the COMPLETE timeline (not just the first N).
+    """
     limit = int(request.args.get("limit", 500))
-    rows = _query(DB_LIVE,
-        "SELECT ts, equity, mark_price, cash, coin FROM live_equity "
-        "WHERE ts >= ? ORDER BY ts ASC LIMIT ?",
-        (_session_start(), limit))
+    session_start = _session_start()
+    # Count first, downsample with ROW_NUMBER % k = 0 to span the whole session
+    total = _query(DB_LIVE,
+        "SELECT COUNT(*) as n FROM live_equity WHERE ts >= ?",
+        (session_start,))[0]["n"]
+    if total <= limit:
+        rows = _query(DB_LIVE,
+            "SELECT ts, equity, mark_price, cash, coin FROM live_equity "
+            "WHERE ts >= ? ORDER BY ts ASC",
+            (session_start,))
+    else:
+        # Every k-th row, plus always include the latest (so chart end matches now)
+        k = max(1, total // limit)
+        rows = _query(DB_LIVE,
+            "WITH numbered AS ("
+            "  SELECT ts, equity, mark_price, cash, coin,"
+            "         ROW_NUMBER() OVER (ORDER BY ts) AS rn,"
+            "         COUNT(*) OVER ()                AS total"
+            "    FROM live_equity WHERE ts >= ?"
+            ") "
+            "SELECT ts, equity, mark_price, cash, coin FROM numbered "
+            "WHERE (rn - 1) % ? = 0 OR rn = total "
+            "ORDER BY ts ASC",
+            (session_start, k))
     return jsonify(rows)
 
 
