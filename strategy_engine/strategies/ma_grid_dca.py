@@ -28,6 +28,11 @@ class MAGridDCAConfig:
     ma_short_period:   int   = 5
     ma_long_period:    int   = 60
     ma_threshold_pct:  float = 0.5
+    # Pyramidal sizing: 0 = uniform (legacy), >0 = deeper orders get larger size.
+    # Per-order weight = 1 + pyramid_factor × depth_rank / (N-1)
+    # e.g. factor=0.5, N=20 → shallowest=$5.00, deepest=$7.50 (delta 50%)
+    # e.g. factor=2.0, N=20 → shallowest=$2.50, deepest=$7.50 (delta 200%)
+    pyramid_factor:    float = 0.0
 
 
 class MAGridDCA(Strategy):
@@ -122,12 +127,25 @@ class MAGridDCA(Strategy):
     def _build_buy_grid(self, mark: float, lower_pct: float) -> list[Intent]:
         low_price = mark * (1 - lower_pct / 100)
         n = self.cfg.num_grids
-        per_order_usdt = self.cfg.allocation_usdt / n
         step = (mark - low_price) / n
+        factor = self.cfg.pyramid_factor
+
+        # Pyramidal sizing: deeper orders (lower index = lower price) get more capital
+        # i=0 is shallowest (closest to mark), i=n-1 is deepest. Bot expects index 0 = deepest
+        # in the buy ladder (lowest price), so we flip: depth_rank reversed.
+        # Actually i=0 here is the LOWEST price (deepest discount).
+        # Weight = 1 + factor × (depth_distance_from_top / max_distance)
+        # i=0 → distance from top = n-1 (deepest)  → max weight
+        # i=n-1 → distance from top = 0 (shallowest) → weight 1.0
+        weights = [1.0 + factor * (n - 1 - i) / max(1, n - 1) for i in range(n)]
+        total_weight = sum(weights)
+        per_unit_usdt = self.cfg.allocation_usdt / total_weight
+
         intents: list[Intent] = []
         for i in range(n):
             price = round(low_price + i * step, 1)
-            amount = round(per_order_usdt / price, 8)
+            order_usdt = per_unit_usdt * weights[i]
+            amount = round(order_usdt / price, 8)
             if amount * price < 1.0:   # min order floor
                 continue
             intents.append(Intent(

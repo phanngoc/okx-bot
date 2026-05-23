@@ -22,11 +22,12 @@ log = logging.getLogger(__name__)
 
 
 class StopSignal(enum.Enum):
-    NONE       = "none"
-    SOFT_STOP  = "soft_stop"    # cancel new orders, hold existing
-    HARD_STOP  = "hard_stop"    # cancel all + market-sell base
-    DAILY_LOSS = "daily_loss"   # pause until UTC midnight
-    MANUAL     = "manual"       # STOP_NOW file present
+    NONE          = "none"
+    SOFT_STOP     = "soft_stop"      # cancel new orders, hold existing
+    HARD_STOP     = "hard_stop"      # cancel all + market-sell base (equity drawdown)
+    DAILY_LOSS    = "daily_loss"     # pause until UTC midnight
+    MANUAL        = "manual"         # STOP_NOW file present
+    CATASTROPHIC  = "catastrophic"   # market crashed >= threshold from entry → flat + pause
 
 
 @dataclass
@@ -44,11 +45,12 @@ class RiskState:
 
 @dataclass
 class RiskConfig:
-    start_balance:       float
-    max_drawdown_pct:    float = 20.0
-    kill_loss_pct:       float = 35.0
-    max_daily_loss_pct:  float = 7.0
-    stop_file:           str = "STOP_NOW"
+    start_balance:           float
+    max_drawdown_pct:        float = 20.0       # soft stop (bot equity dd)
+    kill_loss_pct:           float = 35.0       # hard stop (bot equity dd)
+    max_daily_loss_pct:      float = 7.0        # daily circuit breaker
+    catastrophic_drop_pct:   float = 25.0       # MARKET drop from session entry
+    stop_file:               str   = "STOP_NOW"
 
 
 class RiskMonitor:
@@ -67,9 +69,11 @@ class RiskMonitor:
             last_equity=cfg.start_balance,
             last_check_ts=now_ts,
         )
+        self.cat_triggered = False
         log.info(f"[RISK] monitor armed — start ${cfg.start_balance:.2f}  "
                  f"soft@-{cfg.max_drawdown_pct}%  hard@-{cfg.kill_loss_pct}%  "
-                 f"daily@-{cfg.max_daily_loss_pct}%")
+                 f"daily@-{cfg.max_daily_loss_pct}%  "
+                 f"catastrophic@market-{cfg.catastrophic_drop_pct}%")
 
     # ------------------------------------------------------------------
 
@@ -93,8 +97,10 @@ class RiskMonitor:
 
     # ------------------------------------------------------------------
 
-    def tick(self, equity: float, now_ts: Optional[float] = None) -> StopSignal:
-        """Check all risk layers. Returns the SEVEREST signal triggered."""
+    def tick(self, equity: float, now_ts: Optional[float] = None,
+             market_drop_pct: float = 0.0) -> StopSignal:
+        """Check all risk layers. Returns the SEVEREST signal triggered.
+        `market_drop_pct`: positive value = price has dropped this % from entry."""
         now_ts = now_ts or time.time()
         self._check_new_day(now_ts, equity)
 
@@ -106,6 +112,13 @@ class RiskMonitor:
         if self._check_manual():
             log.critical(f"[RISK] MANUAL stop file detected → HARD_STOP")
             return StopSignal.MANUAL
+
+        if market_drop_pct >= self.cfg.catastrophic_drop_pct:
+            if not self.cat_triggered:
+                log.critical(f"[RISK] CATASTROPHIC — market dropped {market_drop_pct:.2f}% "
+                             f"from session entry (≥ {self.cfg.catastrophic_drop_pct}%) → flat + stop")
+                self.cat_triggered = True
+            return StopSignal.CATASTROPHIC
 
         dd_from_start = (self.cfg.start_balance - equity) / self.cfg.start_balance * 100
         if dd_from_start >= self.cfg.kill_loss_pct:

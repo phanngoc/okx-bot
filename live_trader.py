@@ -145,6 +145,7 @@ def main():
         dca_amount_usdt=float(os.getenv("DCA_AMOUNT_USDT", "10")),
         rebalance_sec=float(os.getenv("MA_REBALANCE_HOURS", "6")) * 3600,
         ma_threshold_pct=float(os.getenv("MA_THRESHOLD_PCT", "0.5")),
+        pyramid_factor=float(os.getenv("PYRAMID_FACTOR", "0.0")),
     )
     strategy = MAGridDCA(strat_cfg)
     executor = OkxLiveExecutor(okx, symbol, db=db,
@@ -156,6 +157,7 @@ def main():
         max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "20")),
         kill_loss_pct=float(os.getenv("KILL_LOSS_PCT", "35")),
         max_daily_loss_pct=float(os.getenv("MAX_DAILY_LOSS_PCT", "7")),
+        catastrophic_drop_pct=float(os.getenv("CATASTROPHIC_DROP_PCT", "25")),
     ))
 
     # ----- State recovery -----
@@ -187,7 +189,9 @@ def main():
         db.mark_running(session.id)
         start_usdt = session.start_usdt
         start_base = session.start_base
-        log.info(f"[MAIN] equity baseline: USDT={start_usdt:.2f}  {base_ccy}={start_base:.6f}")
+        entry_price = session.entry_price
+        log.info(f"[MAIN] equity baseline: USDT={start_usdt:.2f}  {base_ccy}={start_base:.6f}  "
+                 f"entry=${entry_price:,.2f}")
     else:
         # Fresh session: snapshot wallet, then engine.step() will run on_setup
         bal = okx.fetch_balance()
@@ -236,9 +240,12 @@ def main():
             equity = allocation + (cash - start_usdt) + (coin - start_base) * mark
             db.save_equity(equity, cash, coin, mark)
 
-            sig = risk.tick(equity, now_ts)
-            if sig in (StopSignal.HARD_STOP, StopSignal.MANUAL):
-                log.critical(f"[MAIN] {sig.value} → kill switch")
+            # Compute market drop from session entry for catastrophic check
+            market_drop_pct = max(0, (entry_price - mark) / entry_price * 100) if entry_price > 0 else 0
+
+            sig = risk.tick(equity, now_ts, market_drop_pct=market_drop_pct)
+            if sig in (StopSignal.HARD_STOP, StopSignal.MANUAL, StopSignal.CATASTROPHIC):
+                log.critical(f"[MAIN] {sig.value} → kill switch (market drop {market_drop_pct:.2f}%)")
                 bot_coin_delta = max(0, coin - start_base)
                 executor._cancel_all_side(None)
                 if bot_coin_delta > 0:
