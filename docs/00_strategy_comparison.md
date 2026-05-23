@@ -2,18 +2,25 @@
 
 ## Đấu Trường (The Arena)
 
-Năm chiến lược chủ động + benchmark Buy&Hold cạnh tranh trực tiếp trên cùng một dữ liệu giá lịch sử. Tất cả chiến lược đều bắt đầu với cùng một ngân sách ($2,000), cùng một giá vào lệnh, và cùng một mô hình phí (mức phí spot của OKX).
+Năm chiến lược chủ động + Adaptive (meta-strategy) + benchmark Buy&Hold cạnh tranh trực tiếp trên cùng một dữ liệu giá lịch sử. Tất cả chiến lược đều bắt đầu với cùng một ngân sách ($2,000), cùng một giá vào lệnh, và cùng một mô hình phí (mức phí spot của OKX).
+
+> **Chiến lược chính trong production (live bot):** [MA_Grid+DCA](07_ma_grid_dca.md)
+> Đây là phiên bản nâng cấp của Grid+DCA với MA brain điều chỉnh range + DCA size theo trend.
 
 ## So Sánh Nhanh
 
 | Chiến Lược | Loại | Lấy Cảm Hứng Từ | Giao Dịch/Tuần | Chi Phí TB | Thị Trường Tốt Nhất |
 |----------|------|-------------|-------------|----------|-------------|
+| **MA_Grid+DCA** ⭐ | **Hybrid + adaptive** | **Pionex + Donchian** | **70-150** | **$3-5** | **Mọi regime (robust)** |
 | Grid+DCA | Cơ học | Pionex, Bitsgap | 140+ | $5-6 | Đi ngang (sideways) |
 | TrailingDCA | Theo sự kiện | 3Commas | 1-10 | $0-2 | Hồi phục chữ V |
 | BB_Breakout | Momentum | Bollinger/Carter | 5-15 | $3-5 | Bứt phá sau squeeze |
 | MeanRevert | Trái chiều | Stat arb, Hummingbot | 8-15 | $4-6 | Đi trong biên độ |
+| Adaptive | Meta (regime switch) | Bybit Smart Trading | 50-100 | $4-7 | Mixed regimes |
 | Debate | Dùng AI | Research (MIT 2023) | 8-15 | $3-5 | Theo tin tức |
 | Buy&Hold | Bị động | Buffett, Bogle | 0 | $0 | Thị trường tăng |
+
+⭐ = Strategy đang chạy live trong production bot
 
 ## Kết Quả Đấu Trường (BTC/USDT 7 ngày, thị trường -2.72%)
 
@@ -116,3 +123,39 @@ Sau 60 ngày chạy đấu trường hàng ngày, chúng ta sẽ biết:
 | [04_mean_reversion.md](04_mean_reversion.md) | Mean Reversion |
 | [05_debate_agent.md](05_debate_agent.md) | Multi-Agent Debate |
 | [06_buy_and_hold.md](06_buy_and_hold.md) | Buy & Hold (Benchmark) |
+| **[07_ma_grid_dca.md](07_ma_grid_dca.md)** | **MA_Grid+DCA ⭐ (live production)** |
+
+## Production Status (2026-05)
+
+Bot live đang chạy chiến lược **MA_Grid+DCA** trên OKX demo trading (sandbox mode):
+
+- **PID managed by pm2** — auto-restart on crash, graceful resume on stop
+- **Allocation:** $110 USDT (Phase 1 demo)
+- **Symbol:** BTC/USDT
+- **Risk layers:** 7 (per-order cap → daily loss → soft → hard → catastrophic → manual → subaccount)
+- **Engine architecture:** same code in backtest + live (no logic drift)
+- **State persistence:** SQLite — resume across restarts
+- **Web dashboard:** http://127.0.0.1:5050
+
+Strategy nâng cấp từ Grid+DCA cổ điển với:
+1. **MA brain** (every 6h): shift grid range + DCA size theo bull/bear/neutral
+2. **Pyramidal sizing** (deeper orders bigger): defensive trong crash
+3. **Catastrophic stop** (market -20% from entry): flash-crash protection
+
+Xem [07_ma_grid_dca.md](07_ma_grid_dca.md) cho full deep-dive.
+
+## Benchmark 9-scenario (2026-05)
+
+Toàn bộ strategies trên 9 market regimes:
+
+| Strategy | Avg ROI | Best in | Worst in |
+|----------|---------|---------|----------|
+| **Adaptive** ⭐ | **+1.35%** | V-shape, mixed regimes | Complex configs |
+| **MA_Grid+DCA** ⭐ | **+1.28%** | Sideways, mild trends, V-shape | Strong one-way uptrends |
+| Grid+DCA | +1.27% | Sideways | Crashes (capital exhausted) |
+| MeanRevert | +0.39% | Mild downtrend (RSI catches bounces) | Strong trends, crashes |
+| Buy&Hold | +0.31% | Strong uptrend (>10%) | Bear markets |
+| TrailingDCA | +0.09% | V-shape recoveries | Sideways (no triggers) |
+| BB_Breakout | -0.17% | Strong breakouts | Sideways, downtrend |
+
+→ **MA_Grid+DCA** là baseline strongest. **Adaptive** thêm regime switching cho +0.07pp marginal.
