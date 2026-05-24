@@ -209,6 +209,7 @@ def main():
     log.info(f"=== LIVE TRADER STARTED — engine path, tick every {interval}s ===")
 
     soft_stopped = False
+    last_rebalance_logged = engine.last_fired.get("rebalance", 0.0)
     while not STOP_FLAG:
         try:
             now_ts = time.time()
@@ -231,6 +232,14 @@ def main():
             db.persist_timer("last_dca_ts",       engine.last_fired.get("dca", 0.0))
             db.persist_timer("last_rebalance_ts", engine.last_fired.get("rebalance", 0.0))
             db.persist_timer("current_trend",     strategy.current_trend)
+
+            # Log trend row when rebalance just ran (6h cadence → 4 rows/day)
+            cur_rebal_ts = engine.last_fired.get("rebalance", 0.0)
+            if cur_rebal_ts > last_rebalance_logged:
+                db.save_trend(strategy.current_trend, strategy.latest_spread, tick.price)
+                last_rebalance_logged = cur_rebal_ts
+                log.info(f"[MA] logged trend snapshot: {strategy.current_trend} "
+                         f"spread={strategy.latest_spread:+.3f}%")
 
             # Equity isolation: bot equity excludes pre-existing wallet PnL
             bal = okx.fetch_balance()

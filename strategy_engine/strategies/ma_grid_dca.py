@@ -41,6 +41,7 @@ class MAGridDCA(Strategy):
     def __init__(self, cfg: MAGridDCAConfig):
         self.cfg = cfg
         self.current_trend: str = "neutral"
+        self.latest_spread: float = 0.0                # last MA5/MA60 spread % (for logging)
         self.dca_amount: float = cfg.dca_amount_usdt   # adjusted by trend
         self.prices: list[float] = []                  # for MA detection
         self.entry_price: Optional[float] = None
@@ -174,6 +175,7 @@ class MAGridDCA(Strategy):
 
     def _rebalance(self) -> list[Intent]:
         trend, spread = self._detect_trend()
+        self.latest_spread = spread          # always update for logging
         if trend == self.current_trend:
             return []   # no change
         self.current_trend = trend
