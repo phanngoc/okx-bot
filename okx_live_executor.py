@@ -265,6 +265,11 @@ class OkxLiveExecutor(Executor):
         okx_ids = {o["id"] for o in okx_open}
         db_ids = self.db.open_order_ids_for_session(started_at)
 
+        # CRITICAL: repopulate id_tag from DB so on-fill events get correct tag.
+        # Without this, after restart all fill events have tag="" and the strategy's
+        # on_fill ignores them (e.g. MAGridDCA only replenishes on tag.startswith("grid")).
+        self._load_tags_from_db(started_at)
+
         known   = okx_ids & db_ids
         orphans = okx_ids - db_ids    # on exchange but missing in DB
         missing = db_ids - okx_ids    # in DB but gone from exchange
@@ -301,6 +306,24 @@ class OkxLiveExecutor(Executor):
 
         self.tracked_ids = okx_ids
         return {"known": len(known), "orphans": len(orphans), "missing": len(missing)}
+
+    def _load_tags_from_db(self, started_at: str) -> None:
+        """Populate self.id_tag from DB so post-restart fills carry the original
+        strategy tag (kind column). Critical for on_fill replenishment logic."""
+        if not self.db:
+            return
+        with sqlite3.connect(self.db.db_path) as conn:
+            rows = conn.execute(
+                "SELECT id, kind FROM live_orders WHERE created_at >= ? AND kind IS NOT NULL",
+                (started_at,),
+            ).fetchall()
+        loaded = 0
+        for oid, kind in rows:
+            if oid and kind and oid not in self.id_tag:
+                self.id_tag[oid] = kind
+                loaded += 1
+        if loaded:
+            log.info(f"[ADOPT] hydrated {loaded} order tags from DB")
 
     # ------------------------------------------------------------------
     # Executor interface
